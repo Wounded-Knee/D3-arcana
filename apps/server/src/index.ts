@@ -2,13 +2,55 @@ import "dotenv/config";
 import express from "express";
 import type { MessageCreatedEvent } from "@d3-arcana/events";
 import { pool } from "./database.js";
+import { eventBus } from "./events/index.js";
 import { createUser } from "./repositories/users.js";
 import { createConversation } from "./repositories/conversations.js";
+import { createMessage } from "./repositories/messages.js";
 
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json());
+
+app.get("/test/events", (_req, res) => {
+  res.json(eventBus.getEvents());
+});
+
+app.post("/test/messages", async (req, res) => {
+  try {
+    const {
+      conversationId,
+      senderId,
+      content,
+    } = req.body;
+
+    if (
+      typeof conversationId !== "string" ||
+      typeof senderId !== "string" ||
+      typeof content !== "string" ||
+      content.trim() === ""
+    ) {
+      res.status(400).json({
+        error: "conversationId, senderId, and content are required",
+      });
+      return;
+    }
+
+    const message = await createMessage(
+      conversationId,
+      senderId,
+      content.trim(),
+    );
+
+    res.status(201).json(message);
+  } catch (error) {
+    console.error("Failed to create message:", error);
+
+    res.status(500).json({
+      error: "Failed to create message",
+    });
+  }
+});
 
 app.post("/test/conversations", async (req, res) => {
   try {

@@ -1,10 +1,41 @@
 import {
+    jsonb,
     pgTable,
     text,
     timestamp,
     primaryKey,
     uuid,
   } from "drizzle-orm/pg-core";
+  
+  export const outboxEvents = pgTable("outbox_events", {
+    id: uuid("id").defaultRandom().primaryKey(),
+  
+    type: text("type").notNull(),
+  
+    aggregateType: text("aggregate_type").notNull(),
+  
+    aggregateId: uuid("aggregate_id").notNull(),
+  
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, {
+        onDelete: "cascade",
+      }),
+  
+    actorId: uuid("actor_id")
+      .notNull()
+      .references(() => users.id),
+  
+    payload: jsonb("payload").notNull(),
+  
+    createdAt: timestamp("created_at", {
+      withTimezone: true,
+    }).defaultNow().notNull(),
+  
+    publishedAt: timestamp("published_at", {
+      withTimezone: true,
+    }),
+  });
   
   export const users = pgTable("users", {
     id: uuid("id").defaultRandom().primaryKey(),
