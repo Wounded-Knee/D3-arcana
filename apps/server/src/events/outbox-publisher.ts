@@ -3,7 +3,7 @@ import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 
 import { db } from "../database.js";
 import { outboxEvents } from "../db/schema.js";
-import { eventBus } from "./index.js";
+import { eventBus } from "./event-bus-instance.js";
 
 const BATCH_SIZE = 10;
 const LEASE_DURATION_SECONDS = 60;

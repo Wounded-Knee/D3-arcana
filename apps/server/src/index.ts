@@ -2,8 +2,12 @@ import "dotenv/config";
 import express from "express";
 import type { MessageCreatedEvent } from "@d3-arcana/events";
 import { pool } from "./database.js";
+
 import { eventBus } from "./events/index.js";
 import { publishPendingEvents } from "./events/index.js";
+
+import { registerConsumers } from "./consumers/index.js";
+
 import { createUser } from "./repositories/users.js";
 import { createConversation } from "./repositories/conversations.js";
 import { createMessage } from "./repositories/messages.js";
@@ -161,6 +165,8 @@ app.get("/test-event", (_req, res) => {
 
   res.json(event);
 });
+
+registerConsumers();
 
 app.listen(port, () => {
   console.log(`Server listening on port ${port}`);
