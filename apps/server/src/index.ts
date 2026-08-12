@@ -3,6 +3,7 @@ import express from "express";
 import type { MessageCreatedEvent } from "@d3-arcana/events";
 import { pool } from "./database.js";
 import { eventBus } from "./events/index.js";
+import { publishPendingEvents } from "./events/index.js";
 import { createUser } from "./repositories/users.js";
 import { createConversation } from "./repositories/conversations.js";
 import { createMessage } from "./repositories/messages.js";
@@ -11,6 +12,22 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json());
+
+app.post("/test/events/publish", async (_req, res) => {
+  try {
+    await publishPendingEvents();
+
+    res.json({
+      status: "ok",
+    });
+  } catch (error) {
+    console.error("Failed to publish events:", error);
+
+    res.status(500).json({
+      error: "Failed to publish events",
+    });
+  }
+});
 
 app.get("/test/events", (_req, res) => {
   res.json(eventBus.getEvents());

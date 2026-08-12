@@ -27,7 +27,11 @@ import {
       .references(() => users.id),
   
     payload: jsonb("payload").notNull(),
-  
+    
+    claimedAt: timestamp("claimed_at", {
+      withTimezone: true,
+    }),
+
     createdAt: timestamp("created_at", {
       withTimezone: true,
     }).defaultNow().notNull(),
@@ -36,7 +40,7 @@ import {
       withTimezone: true,
     }),
   });
-  
+
   export const users = pgTable("users", {
     id: uuid("id").defaultRandom().primaryKey(),
     displayName: text("display_name").notNull(),

@@ -15,6 +15,13 @@
       "when": 1786555732622,
       "tag": "0001_absent_spyke",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786557148132,
+      "tag": "0002_harsh_apocalypse",
+      "breakpoints": true
     }
   ]
 }

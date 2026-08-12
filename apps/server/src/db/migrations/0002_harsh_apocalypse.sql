@@ -1,0 +1,1 @@
+ALTER TABLE "outbox_events" ADD COLUMN "claimed_at" timestamp with time zone;
