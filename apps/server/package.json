@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate"
   },
   "keywords": [],
   "author": "",
@@ -15,6 +17,7 @@
   "dependencies": {
     "@d3-arcana/events": "workspace:*",
     "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
     "pg": "^8.23.0"
   },
@@ -22,6 +25,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^26.2.0",
     "@types/pg": "^8.21.0",
+    "drizzle-kit": "^0.31.10",
     "tsx": "^4.23.12",
     "typescript": "~5.9.3"
   }
