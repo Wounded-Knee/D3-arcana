@@ -2,6 +2,9 @@ import "dotenv/config";
 import express from "express";
 import type { MessageCreatedEvent } from "@d3-arcana/events";
 import { pool } from "./database.js";
+import { createServer } from "node:http";
+import { createWebSocketServer } from "./realtime/websocket-server.js";
+import { WebSocketManager } from "./realtime/websocket-manager.js";
 
 import { eventBus } from "./events/index.js";
 import { publishPendingEvents } from "./events/index.js";
@@ -166,8 +169,11 @@ app.get("/test-event", (_req, res) => {
   res.json(event);
 });
 
-registerConsumers();
+const server = createServer(app);
+const webSocketManager = new WebSocketManager();
+registerConsumers(webSocketManager);
+createWebSocketServer(server, webSocketManager);
 
-app.listen(port, () => {
+server.listen(port, () => {
   console.log(`Server listening on port ${port}`);
 });
