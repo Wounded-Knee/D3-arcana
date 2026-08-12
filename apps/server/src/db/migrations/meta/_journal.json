@@ -22,6 +22,13 @@
       "when": 1786557148132,
       "tag": "0002_harsh_apocalypse",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786558991710,
+      "tag": "0003_nervous_eddie_brock",
+      "breakpoints": true
     }
   ]
 }

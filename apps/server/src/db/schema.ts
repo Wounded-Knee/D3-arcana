@@ -7,6 +7,24 @@ import {
     uuid,
   } from "drizzle-orm/pg-core";
   
+  export const eventConsumptions = pgTable(
+    "event_consumptions",
+    {
+      consumer: text("consumer").notNull(),
+  
+      eventId: uuid("event_id").notNull(),
+  
+      processedAt: timestamp("processed_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+    },
+    (table) => [
+      primaryKey({
+        columns: [table.consumer, table.eventId],
+      }),
+    ],
+  );
+  
   export const outboxEvents = pgTable("outbox_events", {
     id: uuid("id").defaultRandom().primaryKey(),
   
