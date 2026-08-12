@@ -8,6 +8,7 @@ import { WebSocketManager } from "./realtime/websocket-manager.js";
 
 import { eventBus } from "./events/index.js";
 import { publishPendingEvents } from "./events/index.js";
+import { startOutboxWorker } from "./events/outbox-worker.js";
 
 import { registerConsumers } from "./consumers/index.js";
 
@@ -19,22 +20,6 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json());
-
-app.post("/test/events/publish", async (_req, res) => {
-  try {
-    await publishPendingEvents();
-
-    res.json({
-      status: "ok",
-    });
-  } catch (error) {
-    console.error("Failed to publish events:", error);
-
-    res.status(500).json({
-      error: "Failed to publish events",
-    });
-  }
-});
 
 app.get("/test/events", (_req, res) => {
   res.json(eventBus.getEvents());
@@ -177,3 +162,5 @@ createWebSocketServer(server, webSocketManager);
 server.listen(port, () => {
   console.log(`Server listening on port ${port}`);
 });
+
+const stopOutboxWorker = startOutboxWorker();
