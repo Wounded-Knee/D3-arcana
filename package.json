@@ -1,0 +1,8 @@
+{
+  "name": "D3",
+  "private": true,
+  "scripts": {
+    "dev:mobile": "pnpm --filter mobile start",
+    "dev:server": "pnpm --filter server dev"
+  }
+}
