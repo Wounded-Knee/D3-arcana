@@ -5,4 +5,5 @@ A communication system that transforms natural human conversation into a structu
 ## Blog
 
 - [Stage One: Project Foundation](blog/20260812.0.Foundation.md)
+- [Stage One: Communication Backbone](blog/20260812.1.Progress.md)
 
