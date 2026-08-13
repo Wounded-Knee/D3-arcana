@@ -16,10 +16,13 @@ import { createUser } from "./repositories/users.js";
 import { createConversation } from "./repositories/conversations.js";
 import { createMessage } from "./repositories/messages.js";
 
+import { registerApiRoutes } from "./api/routes.js";
+
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json());
+registerApiRoutes(app);
 
 app.get("/test/events", (_req, res) => {
   res.json(eventBus.getEvents());

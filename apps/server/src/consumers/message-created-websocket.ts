@@ -8,13 +8,16 @@ export function createMessageCreatedWebSocketHandler(
   return async function handleMessageCreated(
     event: MessageCreatedEvent,
   ): Promise<void> {
-    manager.broadcast({
-      type: event.type,
-      eventId: event.eventId,
-      timestamp: event.timestamp,
-      conversationId: event.conversationId,
-      actorId: event.actorId,
-      payload: event.payload,
-    });
+    manager.broadcastToConversation(
+      event.conversationId,
+      {
+        type: event.type,
+        eventId: event.eventId,
+        timestamp: event.timestamp,
+        conversationId: event.conversationId,
+        actorId: event.actorId,
+        payload: event.payload,
+      },
+    );
   };
 }
