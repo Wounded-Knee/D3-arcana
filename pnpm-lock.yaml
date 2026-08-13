@@ -104,6 +104,9 @@ importers:
       '@d3-arcana/events':
         specifier: workspace:*
         version: link:../../packages/events
+      '@d3-arcana/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       dotenv:
         specifier: ^17.4.2
         version: 17.4.2
@@ -146,6 +149,12 @@ importers:
         version: 5.9.3
 
   packages/events: {}
+
+  packages/protocol:
+    dependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
 
 packages:
 

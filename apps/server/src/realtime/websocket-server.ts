@@ -1,23 +1,39 @@
 import type { Server as HttpServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 
+import {
+  PROTOCOL_VERSION,
+  parseClientMessage,
+  serializeServerMessage,
+  type ErrorCode,
+  type ServerMessage,
+} from "@d3-arcana/protocol";
+
 import { authenticator } from "../auth/authenticator-instance.js";
 import { isConversationMember } from "../repositories/conversations.js";
-import { parseClientMessage } from "./protocol.js";
 import { WebSocketManager } from "./websocket-manager.js";
+
+function sendServerMessage(
+  socket: WebSocket,
+  message: ServerMessage,
+): void {
+  try {
+    socket.send(serializeServerMessage(message));
+  } catch (error) {
+    console.error("[ws] invalid outbound message:", error);
+  }
+}
 
 function sendError(
   socket: WebSocket,
-  code: string,
+  code: ErrorCode,
   error: string,
 ): void {
-  socket.send(
-    JSON.stringify({
-      type: "error",
-      code,
-      error,
-    }),
-  );
+  sendServerMessage(socket, {
+    type: "error",
+    code,
+    error,
+  });
 }
 
 export function createWebSocketServer(
@@ -34,13 +50,11 @@ export function createWebSocketServer(
 
     manager.add(socket);
 
-    socket.send(
-      JSON.stringify({
-        type: "connection.ready",
-        protocolVersion: 1,
-        authenticated: false,
-      }),
-    );
+    sendServerMessage(socket, {
+      type: "connection.ready",
+      protocolVersion: PROTOCOL_VERSION,
+      authenticated: false,
+    });
 
     socket.on("message", (data) => {
       void handleMessage(socket, manager, data.toString());
@@ -96,13 +110,11 @@ async function handleMessage(
 
       manager.setAuthenticatedUser(socket, user);
 
-      socket.send(
-        JSON.stringify({
-          type: "auth.authenticated",
-          userId: user.userId,
-          displayName: user.displayName,
-        }),
-      );
+      sendServerMessage(socket, {
+        type: "auth.authenticated",
+        userId: user.userId,
+        displayName: user.displayName,
+      });
 
       console.log(`[ws] client authenticated as ${user.userId}`);
       return;
@@ -136,12 +148,10 @@ async function handleMessage(
 
       manager.subscribe(socket, message.conversationId);
 
-      socket.send(
-        JSON.stringify({
-          type: "conversation.joined",
-          conversationId: message.conversationId,
-        }),
-      );
+      sendServerMessage(socket, {
+        type: "conversation.joined",
+        conversationId: message.conversationId,
+      });
 
       console.log(
         `[ws] client ${user.userId} joined ${message.conversationId}`,
@@ -163,12 +173,10 @@ async function handleMessage(
 
       manager.unsubscribe(socket, message.conversationId);
 
-      socket.send(
-        JSON.stringify({
-          type: "conversation.left",
-          conversationId: message.conversationId,
-        }),
-      );
+      sendServerMessage(socket, {
+        type: "conversation.left",
+        conversationId: message.conversationId,
+      });
 
       console.log(
         `[ws] client ${user.userId} left ${message.conversationId}`,

@@ -16,6 +16,7 @@
   "type": "module",
   "dependencies": {
     "@d3-arcana/events": "workspace:*",
+    "@d3-arcana/protocol": "workspace:*",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",

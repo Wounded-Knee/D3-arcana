@@ -1,5 +1,10 @@
 import { WebSocket } from "ws";
 
+import {
+  serializeServerMessage,
+  type ServerMessage,
+} from "@d3-arcana/protocol";
+
 import type { AuthenticatedUser } from "../auth/types.js";
 
 export class WebSocketManager {
@@ -76,7 +81,7 @@ export class WebSocketManager {
 
   broadcastToConversation(
     conversationId: string,
-    message: unknown,
+    message: ServerMessage,
   ): void {
     const subscribers =
       this.subscriptions.get(conversationId);
@@ -85,7 +90,17 @@ export class WebSocketManager {
       return;
     }
 
-    const payload = JSON.stringify(message);
+    let payload: string;
+
+    try {
+      payload = serializeServerMessage(message);
+    } catch (error) {
+      console.error(
+        "[ws] invalid broadcast message:",
+        error,
+      );
+      return;
+    }
 
     for (const client of subscribers) {
       if (client.readyState === WebSocket.OPEN) {
