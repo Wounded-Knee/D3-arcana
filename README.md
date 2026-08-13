@@ -2,6 +2,8 @@
 
 A communication system that transforms natural human conversation into a structured, auditable semantic model that preserves individual perspectives, evidence, disagreement, and logical relationships to enable large-scale constructive collective reasoning.
 
+The platform is designed to create constructive disruption in the natural flow of human conversation, using computationally structured feedback to preserve cognitive work, expose relevant information, maintain unresolved matters, surface disagreement, and stimulate richer subsequent contributions.
+
 ## Blog
 
 - [Stage One: Project Foundation](blog/20260812.0.Foundation.md)
