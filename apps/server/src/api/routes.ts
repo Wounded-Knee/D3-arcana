@@ -1,182 +1,190 @@
-import type { Express } from "express";
+import express, { type Express } from "express";
+import { z } from "zod";
 
-import { createUser } from "../repositories/users.js";
 import {
-    createConversation,
-    getConversationById,
-    getConversationMembers,
+  asyncHandler,
+  BadRequestError,
+  NotFoundError,
+} from "./errors.js";
+import {
+  conversationIdParamSchema,
+  createConversationSchema,
+  createMessageSchema,
+  createUserSchema,
+  listMessagesQuerySchema,
+  userIdParamSchema,
+} from "./schemas/http.js";
+import { createUser, getUserById } from "../repositories/users.js";
+import {
+  createConversation,
+  getConversationById,
+  getConversationMembers,
+  getConversationsForUser,
 } from "../repositories/conversations.js";
 import {
-    createMessage,
-    getMessages,
+  createMessage,
+  getMessages,
 } from "../repositories/messages.js";
-import {
-    createConversationSchema,
-    createMessageSchema,
-    createUserSchema,
-  } from "./schemas/http.js";
+
+function parseBody<T>(
+  schema: z.ZodType<T>,
+  body: unknown,
+): T {
+  const result = schema.safeParse(body);
+  if (!result.success) {
+    throw new BadRequestError("Invalid request", result.error.issues);
+  }
+  return result.data;
+}
+
+function parseParams<T>(
+  schema: z.ZodType<T>,
+  params: unknown,
+): T {
+  const result = schema.safeParse(params);
+  if (!result.success) {
+    throw new BadRequestError("Invalid request", result.error.issues);
+  }
+  return result.data;
+}
+
+function parseQuery<T>(
+  schema: z.ZodType<T>,
+  query: unknown,
+): T {
+  const result = schema.safeParse(query);
+  if (!result.success) {
+    throw new BadRequestError("Invalid request", result.error.issues);
+  }
+  return result.data;
+}
 
 export function registerApiRoutes(app: Express): void {
-  app.post("/users", async (req, res) => {
-    try {
-        const result = createUserSchema.safeParse(req.body);
+  const router = express.Router();
 
-        if (!result.success) {
-            res.status(400).json({
-            error: "Invalid request",
-            details: result.error.issues,
-            });
-        
-            return;
-        }
-        
-        const user = await createUser(
-            result.data.displayName,
-        );
-
+  router.post(
+    "/users",
+    asyncHandler(async (req, res) => {
+      const body = parseBody(createUserSchema, req.body);
+      const user = await createUser(body.displayName);
       res.status(201).json(user);
-    } catch (error) {
-      console.error("Failed to create user:", error);
+    }),
+  );
 
-      res.status(500).json({
-        error: "Failed to create user",
-      });
-    }
-  });
+  router.get(
+    "/users/:userId",
+    asyncHandler(async (req, res) => {
+      const { userId } = parseParams(userIdParamSchema, req.params);
+      const user = await getUserById(userId);
 
-  app.post("/conversations", async (req, res) => {
-    try {
-    const result =
-        createConversationSchema.safeParse(req.body);
-      
-      if (!result.success) {
-        res.status(400).json({
-          error: "Invalid request",
-          details: result.error.issues,
-        });
-      
-        return;
+      if (!user) {
+        throw new NotFoundError("User not found");
       }
-      
+
+      res.json(user);
+    }),
+  );
+
+  router.get(
+    "/users/:userId/conversations",
+    asyncHandler(async (req, res) => {
+      const { userId } = parseParams(userIdParamSchema, req.params);
+
+      const user = await getUserById(userId);
+      if (!user) {
+        throw new NotFoundError("User not found");
+      }
+
+      const conversations = await getConversationsForUser(userId);
+      res.json({ conversations });
+    }),
+  );
+
+  router.post(
+    "/conversations",
+    asyncHandler(async (req, res) => {
+      const body = parseBody(createConversationSchema, req.body);
+
+      const creator = await getUserById(body.createdBy);
+      if (!creator) {
+        throw new BadRequestError("createdBy user does not exist");
+      }
+
       const conversation = await createConversation(
-        result.data.name,
-        result.data.createdBy,
+        body.name,
+        body.createdBy,
       );
-
       res.status(201).json(conversation);
-    } catch (error) {
-      console.error(
-        "Failed to create conversation:",
-        error,
+    }),
+  );
+
+  router.get(
+    "/conversations/:conversationId",
+    asyncHandler(async (req, res) => {
+      const { conversationId } = parseParams(
+        conversationIdParamSchema,
+        req.params,
       );
 
-      res.status(500).json({
-        error: "Failed to create conversation",
+      const conversation = await getConversationById(conversationId);
+      if (!conversation) {
+        throw new NotFoundError("Conversation not found");
+      }
+
+      const members = await getConversationMembers(conversationId);
+      res.json({
+        ...conversation,
+        members,
       });
-    }
-  });
+    }),
+  );
 
-  app.post(
+  router.get(
     "/conversations/:conversationId/messages",
-      async (req, res) => {
-          try {
-              const result =
-                  createMessageSchema.safeParse(req.body);
+    asyncHandler(async (req, res) => {
+      const { conversationId } = parseParams(
+        conversationIdParamSchema,
+        req.params,
+      );
+      const query = parseQuery(listMessagesQuerySchema, req.query);
 
-              if (!result.success) {
-                  res.status(400).json({
-                      error: "Invalid request",
-                      details: result.error.issues,
-                  });
-
-                  return;
-              }
-
-              const message = await createMessage(
-                  req.params.conversationId,
-                  result.data.senderId,
-                  result.data.content,
-              );
-
-              res.status(201).json(message);
-          } catch (error) {
-              console.error("Failed to create message:", error);
-
-              res.status(500).json({
-                  error: "Failed to create message",
-              });
-          }
-      },
-  );
-
-  app.get(
-    "/conversations/:conversationId",
-    async (req, res) => {
-      try {
-        const { conversationId } = req.params;
-  
-        const conversation =
-          await getConversationById(conversationId);
-  
-        if (!conversation) {
-          res.status(404).json({
-            error: "Conversation not found",
-          });
-          return;
-        }
-  
-        const members =
-          await getConversationMembers(conversationId);
-  
-        res.json({
-          ...conversation,
-          members,
-        });
-      } catch (error) {
-        console.error(
-          "Failed to get conversation:",
-          error,
-        );
-  
-        res.status(500).json({
-          error: "Failed to get conversation",
-        });
+      const conversation = await getConversationById(conversationId);
+      if (!conversation) {
+        throw new NotFoundError("Conversation not found");
       }
-    },
+
+      const { messages, hasMore } = await getMessages(conversationId, {
+        limit: query.limit,
+        before: query.before,
+      });
+
+      res.json({ messages, hasMore });
+    }),
   );
 
-  app.get(
+  router.post(
     "/conversations/:conversationId/messages",
-    async (req, res) => {
-      try {
-        const { conversationId } = req.params;
-  
-        const conversation =
-          await getConversationById(conversationId);
-  
-        if (!conversation) {
-          res.status(404).json({
-            error: "Conversation not found",
-          });
-          return;
-        }
-  
-        const messages =
-          await getMessages(conversationId);
-  
-        res.json({
-          messages,
-        });
-      } catch (error) {
-        console.error(
-          "Failed to get messages:",
-          error,
-        );
-  
-        res.status(500).json({
-          error: "Failed to get messages",
-        });
+    asyncHandler(async (req, res) => {
+      const { conversationId } = parseParams(
+        conversationIdParamSchema,
+        req.params,
+      );
+      const body = parseBody(createMessageSchema, req.body);
+
+      const conversation = await getConversationById(conversationId);
+      if (!conversation) {
+        throw new NotFoundError("Conversation not found");
       }
-    },
+
+      const message = await createMessage(
+        conversationId,
+        body.senderId,
+        body.content,
+      );
+
+      res.status(201).json(message);
+    }),
   );
+
+  app.use("/api/v1", router);
 }

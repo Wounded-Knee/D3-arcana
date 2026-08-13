@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { db } from "../database.js";
 import {
   conversations,
@@ -59,4 +59,39 @@ export async function getConversationMembers(
         conversationId,
       ),
     );
+}
+
+export async function getConversationsForUser(userId: string) {
+  return db
+    .select({
+      id: conversations.id,
+      name: conversations.name,
+      createdBy: conversations.createdBy,
+      createdAt: conversations.createdAt,
+    })
+    .from(conversations)
+    .innerJoin(
+      conversationMembers,
+      eq(conversationMembers.conversationId, conversations.id),
+    )
+    .where(eq(conversationMembers.userId, userId))
+    .orderBy(asc(conversations.createdAt));
+}
+
+export async function isConversationMember(
+  conversationId: string,
+  userId: string,
+): Promise<boolean> {
+  const [membership] = await db
+    .select({ conversationId: conversationMembers.conversationId })
+    .from(conversationMembers)
+    .where(
+      and(
+        eq(conversationMembers.conversationId, conversationId),
+        eq(conversationMembers.userId, userId),
+      ),
+    )
+    .limit(1);
+
+  return membership !== undefined;
 }
