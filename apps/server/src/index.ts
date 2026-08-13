@@ -6,7 +6,7 @@ import { createServer } from "node:http";
 import { createWebSocketServer } from "./realtime/websocket-server.js";
 import { WebSocketManager } from "./realtime/websocket-manager.js";
 
-import { eventBus } from "./events/index.js";
+import { eventBus } from "./events/event-bus-instance.js";
 import { publishPendingEvents } from "./events/index.js";
 import { startOutboxWorker } from "./events/outbox-worker.js";
 
