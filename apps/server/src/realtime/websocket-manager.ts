@@ -1,11 +1,18 @@
 import { WebSocket } from "ws";
 
+import type { AuthenticatedUser } from "../auth/types.js";
+
 export class WebSocketManager {
   private readonly clients = new Set<WebSocket>();
 
   private readonly subscriptions = new Map<
     string,
     Set<WebSocket>
+  >();
+
+  private readonly authenticatedUsers = new WeakMap<
+    WebSocket,
+    AuthenticatedUser
   >();
 
   add(socket: WebSocket): void {
@@ -97,5 +104,18 @@ export class WebSocketManager {
     return (
       this.subscriptions.get(conversationId)?.size ?? 0
     );
+  }
+
+  setAuthenticatedUser(
+    socket: WebSocket,
+    user: AuthenticatedUser,
+  ): void {
+    this.authenticatedUsers.set(socket, user);
+  }
+
+  getAuthenticatedUser(
+    socket: WebSocket,
+  ): AuthenticatedUser | null {
+    return this.authenticatedUsers.get(socket) ?? null;
   }
 }

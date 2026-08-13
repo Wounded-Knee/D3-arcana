@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   asyncHandler,
   BadRequestError,
+  ForbiddenError,
   NotFoundError,
 } from "./errors.js";
 import {
@@ -14,12 +15,14 @@ import {
   listMessagesQuerySchema,
   userIdParamSchema,
 } from "./schemas/http.js";
+import { requireAuth } from "../auth/require-auth.js";
 import { createUser, getUserById } from "../repositories/users.js";
 import {
   createConversation,
   getConversationById,
   getConversationMembers,
   getConversationsForUser,
+  isConversationMember,
 } from "../repositories/conversations.js";
 import {
   createMessage,
@@ -87,8 +90,13 @@ export function registerApiRoutes(app: Express): void {
 
   router.get(
     "/users/:userId/conversations",
+    requireAuth,
     asyncHandler(async (req, res) => {
       const { userId } = parseParams(userIdParamSchema, req.params);
+
+      if (req.user!.userId !== userId) {
+        throw new ForbiddenError("Cannot access another user's conversations");
+      }
 
       const user = await getUserById(userId);
       if (!user) {
@@ -102,17 +110,13 @@ export function registerApiRoutes(app: Express): void {
 
   router.post(
     "/conversations",
+    requireAuth,
     asyncHandler(async (req, res) => {
       const body = parseBody(createConversationSchema, req.body);
 
-      const creator = await getUserById(body.createdBy);
-      if (!creator) {
-        throw new BadRequestError("createdBy user does not exist");
-      }
-
       const conversation = await createConversation(
         body.name,
-        body.createdBy,
+        req.user!.userId,
       );
       res.status(201).json(conversation);
     }),
@@ -164,6 +168,7 @@ export function registerApiRoutes(app: Express): void {
 
   router.post(
     "/conversations/:conversationId/messages",
+    requireAuth,
     asyncHandler(async (req, res) => {
       const { conversationId } = parseParams(
         conversationIdParamSchema,
@@ -176,9 +181,17 @@ export function registerApiRoutes(app: Express): void {
         throw new NotFoundError("Conversation not found");
       }
 
+      const isMember = await isConversationMember(
+        conversationId,
+        req.user!.userId,
+      );
+      if (!isMember) {
+        throw new ForbiddenError("Not a member of this conversation");
+      }
+
       const message = await createMessage(
         conversationId,
-        body.senderId,
+        req.user!.userId,
         body.content,
       );
 

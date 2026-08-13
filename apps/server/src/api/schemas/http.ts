@@ -6,11 +6,9 @@ export const createUserSchema = z.object({
 
 export const createConversationSchema = z.object({
   name: z.string().trim().min(1).max(200),
-  createdBy: z.uuid(),
 });
 
 export const createMessageSchema = z.object({
-  senderId: z.uuid(),
   content: z.string().trim().min(1).max(10_000),
 });
 

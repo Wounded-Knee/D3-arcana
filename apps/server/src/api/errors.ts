@@ -26,6 +26,18 @@ export class NotFoundError extends HttpError {
   }
 }
 
+export class UnauthorizedError extends HttpError {
+  constructor(message: string) {
+    super(401, message, "unauthorized");
+  }
+}
+
+export class ForbiddenError extends HttpError {
+  constructor(message: string) {
+    super(403, message, "forbidden");
+  }
+}
+
 export function asyncHandler(
   fn: (req: Request, res: Response, next: NextFunction) => Promise<void>,
 ): RequestHandler {
