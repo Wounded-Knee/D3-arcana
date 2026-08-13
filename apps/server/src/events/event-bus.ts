@@ -1,6 +1,6 @@
-import type { MessageCreatedEvent } from "@d3-arcana/events";
+import type { DomainEvent } from "@d3-arcana/events";
 
-export type DomainEvent = MessageCreatedEvent;
+export type { DomainEvent };
 
 export type EventHandler<TEvent extends DomainEvent = DomainEvent> = (
   event: TEvent,

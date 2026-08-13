@@ -1,4 +1,4 @@
-import type { MessageCreatedEvent } from "@d3-arcana/events";
+import { domainEventSchema } from "@d3-arcana/events";
 import { and, eq, isNull, lt, or, sql } from "drizzle-orm";
 
 import { db } from "../database.js";
@@ -13,21 +13,24 @@ export async function publishPendingEvents(): Promise<void> {
 
   for (const record of events) {
     try {
-      if (record.type !== "message.created") {
-        console.error(`Unknown event type: ${record.type}`);
-        continue;
-      }
-
-      const event: MessageCreatedEvent = {
+      const parsed = domainEventSchema.safeParse({
         eventId: record.id,
-        type: "message.created",
+        type: record.type,
         timestamp: record.createdAt.toISOString(),
         conversationId: record.conversationId,
         actorId: record.actorId,
-        payload: record.payload as MessageCreatedEvent["payload"],
-      };
+        payload: record.payload,
+      });
 
-      await eventBus.publish(event);
+      if (!parsed.success) {
+        console.error(
+          `Invalid outbox event ${record.id}:`,
+          parsed.error.flatten(),
+        );
+        continue;
+      }
+
+      await eventBus.publish(parsed.data);
 
       await db
         .update(outboxEvents)

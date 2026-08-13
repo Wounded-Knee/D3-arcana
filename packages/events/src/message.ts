@@ -1,11 +1,23 @@
-import type { EventEnvelope } from "./envelope.js";
+import { z } from "zod";
 
-export interface MessageCreatedPayload {
-  messageId: string;
-  content: string;
-}
+export const messageCreatedPayloadSchema = z.object({
+  messageId: z.uuid(),
+  content: z.string(),
+});
 
-export type MessageCreatedEvent = EventEnvelope<
-  "message.created",
-  MessageCreatedPayload
+export type MessageCreatedPayload = z.infer<
+  typeof messageCreatedPayloadSchema
+>;
+
+export const messageCreatedEventSchema = z.object({
+  eventId: z.uuid(),
+  type: z.literal("message.created"),
+  timestamp: z.string(),
+  conversationId: z.uuid(),
+  actorId: z.uuid(),
+  payload: messageCreatedPayloadSchema,
+});
+
+export type MessageCreatedEvent = z.infer<
+  typeof messageCreatedEventSchema
 >;

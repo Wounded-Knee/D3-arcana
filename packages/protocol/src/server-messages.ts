@@ -1,4 +1,17 @@
+import {
+  domainEventSchema,
+  messageCreatedEventSchema,
+  messageCreatedPayloadSchema,
+  type DomainEvent,
+  type MessageCreatedEvent,
+} from "@d3-arcana/events";
 import { z } from "zod";
+
+export {
+  domainEventSchema,
+  messageCreatedEventSchema,
+  messageCreatedPayloadSchema,
+};
 
 export const PROTOCOL_VERSION = 1;
 
@@ -39,25 +52,6 @@ export const errorMessageSchema = z.object({
   error: z.string(),
 });
 
-export const messageCreatedPayloadSchema = z.object({
-  messageId: z.uuid(),
-  content: z.string(),
-});
-
-export const messageCreatedEventSchema = z.object({
-  eventId: z.uuid(),
-  type: z.literal("message.created"),
-  timestamp: z.string(),
-  conversationId: z.uuid(),
-  actorId: z.uuid(),
-  payload: messageCreatedPayloadSchema,
-});
-
-export const domainEventSchema = z.discriminatedUnion(
-  "type",
-  [messageCreatedEventSchema],
-);
-
 export const eventMessageSchema = z.object({
   type: z.literal("event"),
   event: domainEventSchema,
@@ -88,9 +82,7 @@ export type ConversationLeftMessage = z.infer<
   typeof conversationLeftSchema
 >;
 export type ErrorMessage = z.infer<typeof errorMessageSchema>;
-export type MessageCreatedWireEvent = z.infer<
-  typeof messageCreatedEventSchema
->;
-export type DomainWireEvent = z.infer<typeof domainEventSchema>;
+export type MessageCreatedWireEvent = MessageCreatedEvent;
+export type DomainWireEvent = DomainEvent;
 export type EventMessage = z.infer<typeof eventMessageSchema>;
 export type ServerMessage = z.infer<typeof serverMessageSchema>;
