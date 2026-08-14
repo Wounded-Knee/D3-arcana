@@ -14,11 +14,13 @@ import { registerConsumers } from "./consumers/index.js";
 import { registerApiRoutes } from "./api/routes.js";
 import { errorHandler } from "./api/errors.js";
 import { logDevelopmentEndpoints } from "./dev/network.js";
+import { registerDevCors } from "./dev/cors.js";
 import { registerDevRequestLogger } from "./dev/request-logger.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
 
+registerDevCors(app);
 registerDevRequestLogger(app);
 app.use(express.json());
 registerApiRoutes(app);
