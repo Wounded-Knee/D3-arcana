@@ -12,6 +12,10 @@ export const createMessageSchema = z.object({
   content: z.string().trim().min(1).max(10_000),
 });
 
+export const addConversationMemberSchema = z.object({
+  userId: z.uuid(),
+});
+
 export const userIdParamSchema = z.object({
   userId: z.uuid(),
 });

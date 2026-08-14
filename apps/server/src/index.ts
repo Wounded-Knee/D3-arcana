@@ -13,10 +13,13 @@ import { registerConsumers } from "./consumers/index.js";
 
 import { registerApiRoutes } from "./api/routes.js";
 import { errorHandler } from "./api/errors.js";
+import { logDevelopmentEndpoints } from "./dev/network.js";
+import { registerDevRequestLogger } from "./dev/request-logger.js";
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = Number(process.env.PORT) || 3000;
 
+registerDevRequestLogger(app);
 app.use(express.json());
 registerApiRoutes(app);
 
@@ -56,8 +59,8 @@ const webSocketManager = new WebSocketManager();
 registerConsumers(webSocketManager);
 createWebSocketServer(server, webSocketManager);
 
-server.listen(port, () => {
-  console.log(`Server listening on port ${port}`);
+server.listen(port, "0.0.0.0", () => {
+  logDevelopmentEndpoints(port);
 });
 
 const stopOutboxWorker = startOutboxWorker();

@@ -8,6 +8,7 @@ import {
   NotFoundError,
 } from "./errors.js";
 import {
+  addConversationMemberSchema,
   conversationIdParamSchema,
   createConversationSchema,
   createMessageSchema,
@@ -18,6 +19,7 @@ import {
 import { requireAuth } from "../auth/require-auth.js";
 import { createUser, getUserById } from "../repositories/users.js";
 import {
+  addConversationMember,
   createConversation,
   getConversationById,
   getConversationMembers,
@@ -75,6 +77,19 @@ export function registerApiRoutes(app: Express): void {
   );
 
   router.get(
+    "/me",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const user = await getUserById(req.user!.userId);
+      if (!user) {
+        throw new NotFoundError("User not found");
+      }
+
+      res.json(user);
+    }),
+  );
+
+  router.get(
     "/users/:userId",
     asyncHandler(async (req, res) => {
       const { userId } = parseParams(userIdParamSchema, req.params);
@@ -124,6 +139,7 @@ export function registerApiRoutes(app: Express): void {
 
   router.get(
     "/conversations/:conversationId",
+    requireAuth,
     asyncHandler(async (req, res) => {
       const { conversationId } = parseParams(
         conversationIdParamSchema,
@@ -133,6 +149,14 @@ export function registerApiRoutes(app: Express): void {
       const conversation = await getConversationById(conversationId);
       if (!conversation) {
         throw new NotFoundError("Conversation not found");
+      }
+
+      const isMember = await isConversationMember(
+        conversationId,
+        req.user!.userId,
+      );
+      if (!isMember) {
+        throw new ForbiddenError("Not a member of this conversation");
       }
 
       const members = await getConversationMembers(conversationId);
@@ -145,6 +169,7 @@ export function registerApiRoutes(app: Express): void {
 
   router.get(
     "/conversations/:conversationId/messages",
+    requireAuth,
     asyncHandler(async (req, res) => {
       const { conversationId } = parseParams(
         conversationIdParamSchema,
@@ -157,12 +182,61 @@ export function registerApiRoutes(app: Express): void {
         throw new NotFoundError("Conversation not found");
       }
 
+      const isMember = await isConversationMember(
+        conversationId,
+        req.user!.userId,
+      );
+      if (!isMember) {
+        throw new ForbiddenError("Not a member of this conversation");
+      }
+
       const { messages, hasMore } = await getMessages(conversationId, {
         limit: query.limit,
         before: query.before,
       });
 
       res.json({ messages, hasMore });
+    }),
+  );
+
+  router.post(
+    "/conversations/:conversationId/members",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId } = parseParams(
+        conversationIdParamSchema,
+        req.params,
+      );
+      const body = parseBody(addConversationMemberSchema, req.body);
+
+      const conversation = await getConversationById(conversationId);
+      if (!conversation) {
+        throw new NotFoundError("Conversation not found");
+      }
+
+      const isMember = await isConversationMember(
+        conversationId,
+        req.user!.userId,
+      );
+      if (!isMember) {
+        throw new ForbiddenError("Not a member of this conversation");
+      }
+
+      const user = await getUserById(body.userId);
+      if (!user) {
+        throw new NotFoundError("User not found");
+      }
+
+      const membership = await addConversationMember(
+        conversationId,
+        body.userId,
+      );
+
+      res.status(201).json({
+        conversationId,
+        userId: membership!.userId,
+        joinedAt: membership!.joinedAt,
+      });
     }),
   );
 

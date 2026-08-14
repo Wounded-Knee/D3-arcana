@@ -95,3 +95,34 @@ export async function isConversationMember(
 
   return membership !== undefined;
 }
+
+export async function addConversationMember(
+  conversationId: string,
+  userId: string,
+) {
+  const [membership] = await db
+    .insert(conversationMembers)
+    .values({
+      conversationId,
+      userId,
+    })
+    .onConflictDoNothing()
+    .returning();
+
+  if (membership) {
+    return membership;
+  }
+
+  const [existing] = await db
+    .select()
+    .from(conversationMembers)
+    .where(
+      and(
+        eq(conversationMembers.conversationId, conversationId),
+        eq(conversationMembers.userId, userId),
+      ),
+    )
+    .limit(1);
+
+  return existing ?? null;
+}

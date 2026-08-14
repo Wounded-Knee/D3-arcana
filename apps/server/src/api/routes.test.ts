@@ -17,6 +17,21 @@ describe("HTTP API routes", () => {
     await reloadApp();
   });
 
+  it("returns the authenticated user", async () => {
+    const alice = await createUser("Alice");
+    const app = await createAuthenticatedTestApp({
+      "test-alice": alice.id,
+    });
+
+    const response = await request(app)
+      .get("/api/v1/me")
+      .set("Authorization", "Bearer test-alice")
+      .expect(200);
+
+    expect(response.body.id).toBe(alice.id);
+    expect(response.body.displayName).toBe("Alice");
+  });
+
   it("creates and fetches users", async () => {
     const app = await createTestApp();
 
@@ -134,7 +149,7 @@ describe("HTTP API routes", () => {
     expect(forbidden.body.code).toBe("forbidden");
   });
 
-  it("returns paginated conversation messages", async () => {
+  it("returns paginated conversation messages for members", async () => {
     const alice = await createUser("Alice");
     const conversation = await createConversation("General", alice.id);
     const first = await createMessage(
@@ -148,15 +163,62 @@ describe("HTTP API routes", () => {
       "Second",
     );
 
-    const app = await createTestApp();
+    const app = await createAuthenticatedTestApp({
+      "test-alice": alice.id,
+    });
 
     const response = await request(app)
       .get(`/api/v1/conversations/${conversation.id}/messages`)
+      .set("Authorization", "Bearer test-alice")
       .query({ limit: 1, before: second.id })
       .expect(200);
 
     expect(response.body.hasMore).toBe(false);
     expect(response.body.messages).toHaveLength(1);
     expect(response.body.messages[0].id).toBe(first.id);
+  });
+
+  it("returns 403 when reading messages as a non-member", async () => {
+    const alice = await createUser("Alice");
+    const bob = await createUser("Bob");
+    const conversation = await createConversation("Private", alice.id);
+
+    const app = await createAuthenticatedTestApp({
+      "test-bob": bob.id,
+    });
+
+    const response = await request(app)
+      .get(`/api/v1/conversations/${conversation.id}/messages`)
+      .set("Authorization", "Bearer test-bob")
+      .expect(403);
+
+    expect(response.body.code).toBe("forbidden");
+  });
+
+  it("adds a member to a conversation", async () => {
+    const alice = await createUser("Alice");
+    const bob = await createUser("Bob");
+    const conversation = await createConversation("General", alice.id);
+
+    const app = await createAuthenticatedTestApp({
+      "test-alice": alice.id,
+    });
+
+    const response = await request(app)
+      .post(`/api/v1/conversations/${conversation.id}/members`)
+      .set("Authorization", "Bearer test-alice")
+      .send({ userId: bob.id })
+      .expect(201);
+
+    expect(response.body.userId).toBe(bob.id);
+
+    const bobApp = await createAuthenticatedTestApp({
+      "test-bob": bob.id,
+    });
+
+    await request(bobApp)
+      .get(`/api/v1/conversations/${conversation.id}/messages`)
+      .set("Authorization", "Bearer test-bob")
+      .expect(200);
   });
 });

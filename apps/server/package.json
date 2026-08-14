@@ -9,6 +9,8 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:seed": "tsx src/db/seed.ts",
+    "db:sync-auth": "tsx src/db/sync-auth-tokens.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
