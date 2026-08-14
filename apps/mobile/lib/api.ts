@@ -22,6 +22,11 @@ export interface ConversationDetail extends Conversation {
   members: ConversationMember[];
 }
 
+export interface MessageSender {
+  id: string;
+  displayName: string;
+}
+
 export interface Message {
   id: string;
   conversationId: string;
@@ -30,6 +35,7 @@ export interface Message {
   createdAt: string;
   editedAt: string | null;
   deletedAt: string | null;
+  sender?: MessageSender;
 }
 
 export class ApiError extends Error {
@@ -139,13 +145,10 @@ export async function fetchCurrentUser(token: string): Promise<User> {
   return request<User>(token, '/api/v1/me');
 }
 
-export async function fetchConversations(
-  token: string,
-  userId: string,
-): Promise<Conversation[]> {
+export async function fetchConversations(token: string): Promise<Conversation[]> {
   const data = await request<{ conversations: Conversation[] }>(
     token,
-    `/api/v1/users/${userId}/conversations`,
+    '/api/v1/me/conversations',
   );
 
   return data.conversations;

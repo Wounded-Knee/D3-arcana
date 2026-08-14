@@ -8,6 +8,7 @@ import {
   View,
 } from 'react-native';
 import { Link, Redirect, type Href } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
 import {
@@ -30,7 +31,7 @@ export default function ConversationsScreen() {
     setError(null);
 
     try {
-      const items = await fetchConversations(token, user.id);
+      const items = await fetchConversations(token);
       setConversations(items);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load conversations');
@@ -48,7 +49,7 @@ export default function ConversationsScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>Conversations</Text>
@@ -83,7 +84,7 @@ export default function ConversationsScreen() {
           )}
         />
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
@@ -91,7 +92,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0f172a',
-    paddingTop: 64,
   },
   header: {
     paddingHorizontal: 20,

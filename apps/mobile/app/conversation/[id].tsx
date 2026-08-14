@@ -11,18 +11,41 @@ import {
   View,
 } from 'react-native';
 import { Redirect, useLocalSearchParams, type Href } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
 import {
+  fetchConversation,
   fetchMessages,
   sendMessage,
   type Message,
 } from '@/lib/api';
 
+function resolveSenderName(
+  message: Message,
+  currentUserId: string,
+  memberNames: Map<string, string>,
+): string {
+  if (message.sender?.displayName) {
+    return message.sender.displayName;
+  }
+
+  const cached = memberNames.get(message.senderId);
+  if (cached) {
+    return cached;
+  }
+
+  return message.senderId === currentUserId ? 'You' : 'Unknown';
+}
+
 export default function ConversationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const insets = useSafeAreaInsets();
   const { user, token, realtime } = useAuth();
   const [messages, setMessages] = useState<Message[]>([]);
+  const [memberNames, setMemberNames] = useState<Map<string, string>>(
+    () => new Map(),
+  );
   const [draft, setDraft] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
@@ -48,8 +71,14 @@ export default function ConversationScreen() {
     setError(null);
 
     try {
-      const items = await fetchMessages(token, conversationId);
+      const [items, conversation] = await Promise.all([
+        fetchMessages(token, conversationId),
+        fetchConversation(token, conversationId),
+      ]);
       setMessages(items);
+      setMemberNames(
+        new Map(conversation.members.map((member) => [member.id, member.displayName])),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load messages');
     } finally {
@@ -127,19 +156,26 @@ export default function ConversationScreen() {
     return <Redirect href={'/login' as Href} />;
   }
 
+  const composerPaddingBottom = Math.max(insets.bottom, 12);
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 44 : 0}>
       {isLoading ? (
         <ActivityIndicator style={styles.centered} />
       ) : (
         <FlatList
+          style={styles.messageList}
           data={sortedMessages}
           keyExtractor={(item) => item.id}
           contentContainerStyle={styles.list}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           renderItem={({ item }) => {
             const isMine = item.senderId === user.id;
+            const senderName = resolveSenderName(item, user.id, memberNames);
 
             return (
               <View
@@ -147,6 +183,9 @@ export default function ConversationScreen() {
                   styles.message,
                   isMine ? styles.messageMine : styles.messageOther,
                 ]}>
+                {!isMine ? (
+                  <Text style={styles.senderName}>{senderName}</Text>
+                ) : null}
                 <Text style={styles.messageText}>{item.content}</Text>
                 <Text style={styles.messageMeta}>
                   {new Date(item.createdAt).toLocaleTimeString()}
@@ -159,7 +198,11 @@ export default function ConversationScreen() {
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
-      <View style={styles.composer}>
+      <View
+        style={[
+          styles.composer,
+          { paddingBottom: composerPaddingBottom },
+        ]}>
         <TextInput
           style={styles.input}
           value={draft}
@@ -184,6 +227,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#0f172a',
   },
+  messageList: {
+    flex: 1,
+  },
   list: {
     padding: 16,
     gap: 12,
@@ -205,6 +251,12 @@ const styles = StyleSheet.create({
   messageText: {
     color: '#f8fafc',
     fontSize: 16,
+  },
+  senderName: {
+    color: '#94a3b8',
+    fontSize: 12,
+    fontWeight: '600',
+    marginBottom: 4,
   },
   messageMeta: {
     color: '#cbd5e1',

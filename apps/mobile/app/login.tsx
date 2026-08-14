@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
+import { Redirect, type Href } from 'expo-router';
 import {
   ActivityIndicator,
   Platform,
   Pressable,
   StyleSheet,
   Text,
-  View,
 } from 'react-native';
-import { Redirect, type Href } from 'expo-router';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
 import { pingHealth } from '@/lib/api';
@@ -55,7 +55,7 @@ export default function LoginScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container}>
       <Text style={styles.title}>D3 Arcana</Text>
       <Text style={styles.subtitle}>
         Development sign-in using opaque bearer tokens.
@@ -106,7 +106,7 @@ export default function LoginScreen() {
 
       {isLoading ? <ActivityIndicator style={styles.spinner} /> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
-    </View>
+    </SafeAreaView>
   );
 }
 
