@@ -16,6 +16,7 @@ import { errorHandler } from "./api/errors.js";
 import { logDevelopmentEndpoints } from "./dev/network.js";
 import { registerDevCors } from "./dev/cors.js";
 import { registerDevRequestLogger } from "./dev/request-logger.js";
+import { registerGracefulShutdown } from "./dev/shutdown.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -66,3 +67,9 @@ server.listen(port, "0.0.0.0", () => {
 });
 
 const stopOutboxWorker = startOutboxWorker();
+
+registerGracefulShutdown({
+  server,
+  pool,
+  stopOutboxWorker,
+});

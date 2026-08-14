@@ -8,4 +8,5 @@ The platform is designed to create constructive disruption in the natural flow o
 
 - [Stage One: Project Foundation](blog/20260812.0.Foundation.md)
 - [Stage One: Communication Backbone](blog/20260812.1.Progress.md)
+- [Stage One: Client Integration](blog/20260813.0.ClientIntegration.md)
 
