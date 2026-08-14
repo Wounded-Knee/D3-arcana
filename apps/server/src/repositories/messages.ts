@@ -1,6 +1,6 @@
 import { and, desc, eq, isNull, lt, or } from "drizzle-orm";
 import { db } from "../database.js";
-import { messages, outboxEvents } from "../db/schema.js";
+import { messages, outboxEvents, users } from "../db/schema.js";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -12,14 +12,55 @@ export class InvalidCursorError extends Error {
   }
 }
 
+export interface MessageSender {
+  id: string;
+  displayName: string;
+}
+
+export interface MessageWithSender {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  content: string;
+  createdAt: Date;
+  editedAt: Date | null;
+  deletedAt: Date | null;
+  sender: MessageSender;
+}
+
 export interface GetMessagesOptions {
   limit?: number;
   before?: string;
 }
 
 export interface GetMessagesResult {
-  messages: (typeof messages.$inferSelect)[];
+  messages: MessageWithSender[];
   hasMore: boolean;
+}
+
+function mapMessageRow(row: {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  content: string;
+  createdAt: Date;
+  editedAt: Date | null;
+  deletedAt: Date | null;
+  senderDisplayName: string;
+}): MessageWithSender {
+  return {
+    id: row.id,
+    conversationId: row.conversationId,
+    senderId: row.senderId,
+    content: row.content,
+    createdAt: row.createdAt,
+    editedAt: row.editedAt,
+    deletedAt: row.deletedAt,
+    sender: {
+      id: row.senderId,
+      displayName: row.senderDisplayName,
+    },
+  };
 }
 
 async function resolveCursor(
@@ -91,6 +132,32 @@ export async function createMessage(
   });
 }
 
+export async function getMessageWithSender(
+  messageId: string,
+): Promise<MessageWithSender | null> {
+  const [row] = await db
+    .select({
+      id: messages.id,
+      conversationId: messages.conversationId,
+      senderId: messages.senderId,
+      content: messages.content,
+      createdAt: messages.createdAt,
+      editedAt: messages.editedAt,
+      deletedAt: messages.deletedAt,
+      senderDisplayName: users.displayName,
+    })
+    .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
+    .where(eq(messages.id, messageId))
+    .limit(1);
+
+  if (!row) {
+    return null;
+  }
+
+  return mapMessageRow(row);
+}
+
 export async function getMessages(
   conversationId: string,
   options: GetMessagesOptions = {},
@@ -117,8 +184,18 @@ export async function getMessages(
   }
 
   const rows = await db
-    .select()
+    .select({
+      id: messages.id,
+      conversationId: messages.conversationId,
+      senderId: messages.senderId,
+      content: messages.content,
+      createdAt: messages.createdAt,
+      editedAt: messages.editedAt,
+      deletedAt: messages.deletedAt,
+      senderDisplayName: users.displayName,
+    })
     .from(messages)
+    .innerJoin(users, eq(messages.senderId, users.id))
     .where(and(...conditions))
     .orderBy(desc(messages.createdAt), desc(messages.id))
     .limit(limit + 1);
@@ -127,7 +204,7 @@ export async function getMessages(
   const page = hasMore ? rows.slice(0, limit) : rows;
 
   return {
-    messages: page.reverse(),
+    messages: page.reverse().map(mapMessageRow),
     hasMore,
   };
 }

@@ -102,6 +102,10 @@ describe("HTTP API routes", () => {
 
     expect(messageResponse.body.content).toBe("Hello");
     expect(messageResponse.body.senderId).toBe(alice.id);
+    expect(messageResponse.body.sender).toEqual({
+      id: alice.id,
+      displayName: "Alice",
+    });
   });
 
   it("returns 403 when creating a message as a non-member", async () => {
@@ -120,6 +124,35 @@ describe("HTTP API routes", () => {
       .expect(403);
 
     expect(response.body.code).toBe("forbidden");
+  });
+
+  it("lists conversations for the authenticated user via /me/conversations", async () => {
+    const alice = await createUser("Alice");
+    const bob = await createUser("Bob");
+    const aliceConversation = await createConversation("Alice room", alice.id);
+    await createConversation("Bob room", bob.id);
+
+    const app = await createAuthenticatedTestApp({
+      "test-alice": alice.id,
+    });
+
+    const response = await request(app)
+      .get("/api/v1/me/conversations")
+      .set("Authorization", "Bearer test-alice")
+      .expect(200);
+
+    expect(response.body.conversations).toHaveLength(1);
+    expect(response.body.conversations[0].id).toBe(aliceConversation.id);
+  });
+
+  it("requires auth for /me/conversations", async () => {
+    const app = await createTestApp();
+
+    const response = await request(app)
+      .get("/api/v1/me/conversations")
+      .expect(401);
+
+    expect(response.body.code).toBe("unauthorized");
   });
 
   it("lists conversations only for the authenticated user", async () => {
@@ -176,6 +209,10 @@ describe("HTTP API routes", () => {
     expect(response.body.hasMore).toBe(false);
     expect(response.body.messages).toHaveLength(1);
     expect(response.body.messages[0].id).toBe(first.id);
+    expect(response.body.messages[0].sender).toEqual({
+      id: alice.id,
+      displayName: "Alice",
+    });
   });
 
   it("returns 403 when reading messages as a non-member", async () => {
@@ -220,5 +257,53 @@ describe("HTTP API routes", () => {
       .get(`/api/v1/conversations/${conversation.id}/messages`)
       .set("Authorization", "Bearer test-bob")
       .expect(200);
+  });
+
+  it("returns conversation detail with members for members", async () => {
+    const alice = await createUser("Alice");
+    const bob = await createUser("Bob");
+    const conversation = await createConversation("General", alice.id);
+
+    const app = await createAuthenticatedTestApp({
+      "test-alice": alice.id,
+      "test-bob": bob.id,
+    });
+
+    await request(app)
+      .post(`/api/v1/conversations/${conversation.id}/members`)
+      .set("Authorization", "Bearer test-alice")
+      .send({ userId: bob.id })
+      .expect(201);
+
+    const response = await request(app)
+      .get(`/api/v1/conversations/${conversation.id}`)
+      .set("Authorization", "Bearer test-alice")
+      .expect(200);
+
+    expect(response.body.id).toBe(conversation.id);
+    expect(response.body.name).toBe("General");
+    expect(response.body.members).toEqual(
+      expect.arrayContaining([
+        { id: alice.id, displayName: "Alice" },
+        { id: bob.id, displayName: "Bob" },
+      ]),
+    );
+  });
+
+  it("returns 403 when fetching conversation detail as a non-member", async () => {
+    const alice = await createUser("Alice");
+    const bob = await createUser("Bob");
+    const conversation = await createConversation("Private", alice.id);
+
+    const app = await createAuthenticatedTestApp({
+      "test-bob": bob.id,
+    });
+
+    const response = await request(app)
+      .get(`/api/v1/conversations/${conversation.id}`)
+      .set("Authorization", "Bearer test-bob")
+      .expect(403);
+
+    expect(response.body.code).toBe("forbidden");
   });
 });

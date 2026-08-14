@@ -28,6 +28,7 @@ import {
 } from "../repositories/conversations.js";
 import {
   createMessage,
+  getMessageWithSender,
   getMessages,
 } from "../repositories/messages.js";
 
@@ -86,6 +87,15 @@ export function registerApiRoutes(app: Express): void {
       }
 
       res.json(user);
+    }),
+  );
+
+  router.get(
+    "/me/conversations",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const conversations = await getConversationsForUser(req.user!.userId);
+      res.json({ conversations });
     }),
   );
 
@@ -269,7 +279,12 @@ export function registerApiRoutes(app: Express): void {
         body.content,
       );
 
-      res.status(201).json(message);
+      const enriched = await getMessageWithSender(message.id);
+      if (!enriched) {
+        throw new NotFoundError("Message not found");
+      }
+
+      res.status(201).json(enriched);
     }),
   );
 

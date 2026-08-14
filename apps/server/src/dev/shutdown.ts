@@ -8,7 +8,9 @@ export function registerGracefulShutdown(options: {
   server: Server;
   pool: Pool;
   stopOutboxWorker: () => void;
+  exit?: (code: number) => never;
 }): void {
+  const exit = options.exit ?? process.exit.bind(process);
   let shuttingDown = false;
 
   async function shutdown(signal: string): Promise<void> {
@@ -23,7 +25,7 @@ export function registerGracefulShutdown(options: {
 
     const forceExitTimer = setTimeout(() => {
       console.error("[shutdown] timed out; forcing exit");
-      process.exit(1);
+      exit(1);
     }, SHUTDOWN_TIMEOUT_MS);
 
     forceExitTimer.unref();
@@ -42,10 +44,10 @@ export function registerGracefulShutdown(options: {
 
       await options.pool.end();
       console.log("[shutdown] complete");
-      process.exit(0);
+      exit(0);
     } catch (error) {
       console.error("[shutdown] failed:", error);
-      process.exit(1);
+      exit(1);
     }
   }
 

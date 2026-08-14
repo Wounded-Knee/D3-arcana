@@ -72,6 +72,7 @@ describe("messages repository", () => {
       second.id,
       third.id,
     ]);
+    expect(page.messages[0].sender.displayName).toBe("Alice");
 
     const earlierPage = await getMessages(conversation.id, {
       limit: 2,
