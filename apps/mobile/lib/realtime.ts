@@ -1,4 +1,4 @@
-import type { MessageCreatedEvent } from '@d3-arcana/events';
+import type { DomainEvent } from '@d3-arcana/events';
 import {
   parseServerMessage,
   type ClientMessage,
@@ -6,7 +6,7 @@ import {
 
 import { getWsBaseUrl } from './config';
 
-export type RealtimeEventHandler = (event: MessageCreatedEvent) => void;
+export type RealtimeEventHandler = (event: DomainEvent) => void;
 
 export class RealtimeClient {
   private socket: WebSocket | null = null;
@@ -41,10 +41,8 @@ export class RealtimeClient {
             }
             break;
           case 'event':
-            if (message.event.type === 'message.created') {
-              for (const handler of this.eventHandlers) {
-                handler(message.event);
-              }
+            for (const handler of this.eventHandlers) {
+              handler(message.event);
             }
             break;
           default:

@@ -1,0 +1,12 @@
+services:
+  livekit:
+    image: livekit/livekit-server:latest
+    # Host network so ICE UDP/TCP bind on the PC NIC instead of Docker NAT.
+    # Required on Linux for phone media; port mappings are ignored in this mode.
+    network_mode: host
+    # LIVEKIT_NODE_IP is written to docker/livekit/.env by scripts/livekit-up.sh.
+    command: --config /etc/livekit.yaml --dev --bind 0.0.0.0 --node-ip ${LIVEKIT_NODE_IP:-127.0.0.1}
+    environment:
+      NODE_IP: ${LIVEKIT_NODE_IP:-127.0.0.1}
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro

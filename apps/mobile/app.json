@@ -12,8 +12,14 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.d3arcana.mobile",
       "usesCleartextTraffic": true,
       "softwareKeyboardLayoutMode": "pan",
+      "permissions": [
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS",
+        "INTERNET"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -29,6 +35,8 @@
     },
     "plugins": [
       "expo-router",
+      "@livekit/react-native-expo-plugin",
+      "@config-plugins/react-native-webrtc",
       [
         "expo-splash-screen",
         {

@@ -1,9 +1,11 @@
+import { sql } from "drizzle-orm";
 import {
     jsonb,
     pgTable,
     text,
     timestamp,
     primaryKey,
+    uniqueIndex,
     uuid,
   } from "drizzle-orm/pg-core";
   
@@ -131,3 +133,69 @@ import {
       withTimezone: true,
     }),
   });
+
+  export const calls = pgTable(
+    "calls",
+    {
+      id: uuid("id").defaultRandom().primaryKey(),
+
+      conversationId: uuid("conversation_id")
+        .notNull()
+        .references(() => conversations.id, {
+          onDelete: "cascade",
+        }),
+
+      startedBy: uuid("started_by")
+        .notNull()
+        .references(() => users.id),
+
+      status: text("status").notNull(),
+
+      mediaMode: text("media_mode").notNull(),
+
+      startedAt: timestamp("started_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+
+      endedAt: timestamp("ended_at", {
+        withTimezone: true,
+      }),
+    },
+    (table) => [
+      uniqueIndex("calls_one_active_per_conversation_idx")
+        .on(table.conversationId)
+        .where(sql`${table.status} = 'active'`),
+    ],
+  );
+
+  export const callParticipants = pgTable(
+    "call_participants",
+    {
+      callId: uuid("call_id")
+        .notNull()
+        .references(() => calls.id, {
+          onDelete: "cascade",
+        }),
+
+      userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id, {
+          onDelete: "cascade",
+        }),
+
+      role: text("role").notNull(),
+
+      joinedAt: timestamp("joined_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+
+      leftAt: timestamp("left_at", {
+        withTimezone: true,
+      }),
+    },
+    (table) => [
+      primaryKey({
+        columns: [table.callId, table.userId],
+      }),
+    ],
+  );

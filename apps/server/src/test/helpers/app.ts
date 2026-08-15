@@ -5,16 +5,38 @@ import { vi } from "vitest";
 
 import type { WebSocketManager } from "../../realtime/websocket-manager.js";
 
+async function configureTestMediaEnv(): Promise<void> {
+  process.env.LIVEKIT_URL ??= "http://127.0.0.1:7880";
+  process.env.LIVEKIT_API_KEY ??= "devkey";
+  process.env.LIVEKIT_API_SECRET ??= "devsecret";
+  process.env.LIVEKIT_WEBHOOK_SECRET ??= "devsecret";
+  process.env.CALL_EMPTY_GRACE_MS ??= "45000";
+
+  const { MockMediaSessionProvider } = await import(
+    "../../media/mock-media-provider.js"
+  );
+  const { setMediaSessionProviderForTests } = await import(
+    "../../media/media-provider-instance.js"
+  );
+
+  setMediaSessionProviderForTests(new MockMediaSessionProvider());
+}
+
 export async function createTestApp(): Promise<Express> {
   vi.resetModules();
+  await configureTestMediaEnv();
 
   const express = (await import("express")).default;
   const { registerApiRoutes } = await import("../../api/routes.js");
+  const { registerCallRoutes } = await import("../../api/call-routes.js");
+  const { registerHealthRoutes } = await import("../../api/health-routes.js");
   const { errorHandler } = await import("../../api/errors.js");
 
   const app = express();
   app.use(express.json());
   registerApiRoutes(app);
+  registerCallRoutes(app);
+  registerHealthRoutes(app);
   app.use(errorHandler);
 
   return app;
@@ -48,9 +70,12 @@ export async function createTestServer(
   }
 
   vi.resetModules();
+  await configureTestMediaEnv();
 
   const express = (await import("express")).default;
   const { registerApiRoutes } = await import("../../api/routes.js");
+  const { registerCallRoutes } = await import("../../api/call-routes.js");
+  const { registerHealthRoutes } = await import("../../api/health-routes.js");
   const { errorHandler } = await import("../../api/errors.js");
   const { WebSocketManager } = await import(
     "../../realtime/websocket-manager.js"
@@ -63,6 +88,8 @@ export async function createTestServer(
   const app = express();
   app.use(express.json());
   registerApiRoutes(app);
+  registerCallRoutes(app);
+  registerHealthRoutes(app);
   app.use(errorHandler);
 
   const server = createServer(app);

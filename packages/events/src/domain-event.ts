@@ -1,10 +1,22 @@
 import { z } from "zod";
 
+import {
+  callEndedEventSchema,
+  callParticipantJoinedEventSchema,
+  callParticipantLeftEventSchema,
+  callStartedEventSchema,
+} from "./call.js";
 import { messageCreatedEventSchema } from "./message.js";
 
 export const domainEventSchema = z.discriminatedUnion(
   "type",
-  [messageCreatedEventSchema],
+  [
+    messageCreatedEventSchema,
+    callStartedEventSchema,
+    callParticipantJoinedEventSchema,
+    callParticipantLeftEventSchema,
+    callEndedEventSchema,
+  ],
 );
 
 export type DomainEvent = z.infer<typeof domainEventSchema>;

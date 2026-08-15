@@ -116,7 +116,7 @@ async function request<T>(
 
     if (message.includes('timed out')) {
       throw new ApiError(
-        `Could not reach server at ${apiBaseUrl}. Set EXPO_PUBLIC_API_URL to the same URL that works in the phone browser.`,
+        `Could not reach server at ${apiBaseUrl}. Reload after Metro reconnects, or set EXPO_PUBLIC_API_URL only if you need to override the packager host.`,
         0,
         'network_timeout',
       );
@@ -130,15 +130,79 @@ async function request<T>(
   }
 }
 
-export async function pingHealth(): Promise<{ status: string }> {
-  const apiBaseUrl = getApiBaseUrl();
-  const response = await fetchWithTimeout(`${apiBaseUrl}/health`);
+export type CheckStatus = 'ok' | 'error';
 
-  if (!response.ok) {
-    throw new ApiError(`Health check failed (${response.status})`, response.status);
+export interface DependencyCheck {
+  status: CheckStatus;
+  error?: string;
+  time?: string;
+}
+
+export interface ReadyHealth {
+  status: CheckStatus;
+  database: DependencyCheck;
+  livekit: DependencyCheck;
+}
+
+function isDependencyCheck(value: unknown): value is DependencyCheck {
+  if (!value || typeof value !== 'object') {
+    return false;
   }
 
-  return response.json() as Promise<{ status: string }>;
+  const check = value as DependencyCheck;
+  return check.status === 'ok' || check.status === 'error';
+}
+
+function isReadyHealth(value: unknown): value is ReadyHealth {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const body = value as ReadyHealth;
+  return (
+    (body.status === 'ok' || body.status === 'error') &&
+    isDependencyCheck(body.database) &&
+    isDependencyCheck(body.livekit)
+  );
+}
+
+export async function fetchReadiness(): Promise<ReadyHealth> {
+  const apiBaseUrl = getApiBaseUrl();
+
+  try {
+    const response = await fetchWithTimeout(`${apiBaseUrl}/health/ready`);
+    const body: unknown = await response.json().catch(() => null);
+
+    if (isReadyHealth(body)) {
+      return body;
+    }
+
+    throw new ApiError(
+      `Health check failed (${response.status})`,
+      response.status,
+    );
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+
+    const message =
+      error instanceof Error ? error.message : 'Network request failed';
+
+    if (message.includes('timed out')) {
+      throw new ApiError(
+        `Could not reach server at ${apiBaseUrl}. Reload after Metro reconnects, or set EXPO_PUBLIC_API_URL only if you need to override the packager host.`,
+        0,
+        'network_timeout',
+      );
+    }
+
+    throw new ApiError(
+      `Network error contacting ${apiBaseUrl}: ${message}`,
+      0,
+      'network_error',
+    );
+  }
 }
 
 export async function fetchCurrentUser(token: string): Promise<User> {
@@ -189,4 +253,103 @@ export async function sendMessage(
       body: JSON.stringify({ content }),
     },
   );
+}
+
+export type CallJoinRole = 'publisher' | 'subscriber';
+
+export interface JoinCallResponse {
+  callId: string;
+  provider: 'livekit';
+  url: string;
+  token: string;
+  expiresAt: string;
+  role: CallJoinRole;
+}
+
+export interface ActiveCallParticipant {
+  userId: string;
+  role: CallJoinRole;
+  displayName: string;
+  joinedAt: string;
+}
+
+export interface ActiveCallResponse {
+  call: {
+    id: string;
+    conversationId: string;
+    startedBy: string;
+    status: string;
+    mediaMode: string;
+    startedAt: string;
+  };
+  participants: ActiveCallParticipant[];
+}
+
+export async function joinCall(
+  token: string,
+  conversationId: string,
+  role: CallJoinRole = 'publisher',
+): Promise<JoinCallResponse> {
+  return request<JoinCallResponse>(
+    token,
+    `/api/v1/conversations/${conversationId}/calls/join`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ role }),
+    },
+  );
+}
+
+export async function leaveCall(
+  token: string,
+  conversationId: string,
+): Promise<void> {
+  await request<void>(
+    token,
+    `/api/v1/conversations/${conversationId}/calls/leave`,
+    {
+      method: 'POST',
+    },
+  );
+}
+
+export async function fetchActiveCall(
+  token: string,
+  conversationId: string,
+): Promise<ActiveCallResponse | null> {
+  const apiBaseUrl = getApiBaseUrl();
+  const url = `${apiBaseUrl}/api/v1/conversations/${conversationId}/calls/active`;
+
+  try {
+    const response = await fetchWithTimeout(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    const body = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new ApiError(
+        typeof body.error === 'string' ? body.error : 'Request failed',
+        response.status,
+      );
+    }
+
+    return body as ActiveCallResponse;
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+
+    throw new ApiError(
+      error instanceof Error ? error.message : 'Network request failed',
+      0,
+      'network_error',
+    );
+  }
 }

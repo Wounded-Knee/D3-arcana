@@ -12,48 +12,31 @@ import { startOutboxWorker } from "./events/outbox-worker.js";
 import { registerConsumers } from "./consumers/index.js";
 
 import { registerApiRoutes } from "./api/routes.js";
+import { registerCallRoutes } from "./api/call-routes.js";
+import { registerHealthRoutes } from "./api/health-routes.js";
 import { errorHandler } from "./api/errors.js";
 import { logDevelopmentEndpoints } from "./dev/network.js";
 import { registerDevCors } from "./dev/cors.js";
 import { registerDevRequestLogger } from "./dev/request-logger.js";
 import { registerGracefulShutdown } from "./dev/shutdown.js";
+import { registerLiveKitWebhookRoute } from "./webhooks/livekit-webhooks.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
 
 registerDevCors(app);
 registerDevRequestLogger(app);
+registerLiveKitWebhookRoute(app);
 app.use(express.json());
 registerApiRoutes(app);
+registerCallRoutes(app);
+registerHealthRoutes(app);
 
 if (process.env.NODE_ENV !== "production") {
   app.get("/test/events", (_req, res) => {
     res.json(eventBus.getEvents());
   });
 }
-
-app.get("/health", (_req, res) => {
-  res.json({ status: "ok" });
-});
-
-app.get("/health/database", async (_req, res) => {
-  try {
-    const result = await pool.query("SELECT NOW() AS now");
-
-    res.json({
-      status: "ok",
-      database: "connected",
-      time: result.rows[0].now,
-    });
-  } catch (error) {
-    console.error("Database health check failed:", error);
-
-    res.status(500).json({
-      status: "error",
-      database: "disconnected",
-    });
-  }
-});
 
 app.use(errorHandler);
 

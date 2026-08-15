@@ -10,15 +10,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
-import { pingHealth } from '@/lib/api';
 import { getApiBaseUrl, DEV_TOKENS } from '@/lib/config';
 
 export default function LoginScreen() {
   const { user, signIn, isLoading, error } = useAuth();
   const [pending, setPending] = useState<string | null>(null);
   const [apiBaseUrl, setApiBaseUrl] = useState(getApiBaseUrl);
-  const [healthStatus, setHealthStatus] = useState<string | null>(null);
-  const [healthLoading, setHealthLoading] = useState(false);
 
   useEffect(() => {
     setApiBaseUrl(getApiBaseUrl());
@@ -26,21 +23,6 @@ export default function LoginScreen() {
 
   if (user) {
     return <Redirect href={'/(tabs)' as Href} />;
-  }
-
-  async function handleTestConnection() {
-    setHealthLoading(true);
-    setHealthStatus(null);
-
-    try {
-      const result = await pingHealth();
-      setHealthStatus(`OK — server responded: ${result.status}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Health check failed';
-      setHealthStatus(`Failed — ${message}`);
-    } finally {
-      setHealthLoading(false);
-    }
   }
 
   async function handleSignIn(token: string, label: string) {
@@ -62,29 +44,9 @@ export default function LoginScreen() {
       </Text>
       <Text style={styles.apiUrl}>API: {apiBaseUrl}</Text>
       <Text style={styles.hint}>
-        If this is not the same URL that worked in the phone browser, create
-        apps/mobile/.env with EXPO_PUBLIC_API_URL set to that address.
+        This host comes from Metro (--lan). Restart Metro after a network
+        change. Set EXPO_PUBLIC_API_URL only if you need to override it.
       </Text>
-
-      <Pressable
-        style={styles.secondaryButton}
-        disabled={healthLoading}
-        onPress={() => void handleTestConnection()}>
-        <Text style={styles.secondaryButtonText}>
-          {healthLoading ? 'Testing…' : 'Test connection from app'}
-        </Text>
-      </Pressable>
-
-      {healthStatus ? (
-        <Text
-          style={
-            healthStatus.startsWith('OK')
-              ? styles.healthOk
-              : styles.healthError
-          }>
-          {healthStatus}
-        </Text>
-      ) : null}
 
       <Pressable
         style={styles.button}
@@ -137,26 +99,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#64748b',
     lineHeight: 18,
-  },
-  secondaryButton: {
-    backgroundColor: '#1e293b',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 10,
-  },
-  secondaryButtonText: {
-    color: '#e2e8f0',
-    fontSize: 15,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  healthOk: {
-    color: '#4ade80',
-    fontSize: 13,
-  },
-  healthError: {
-    color: '#f87171',
-    fontSize: 13,
   },
   button: {
     backgroundColor: '#2563eb',

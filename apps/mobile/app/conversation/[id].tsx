@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -14,10 +14,18 @@ import { Redirect, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
+import { createCallSession, type CallSession } from '@/lib/call';
+import type { CallParticipantInfo } from '@/lib/call/types';
+import { resolveCallMediaUrl } from '@/lib/config';
+import { isExpoGo } from '@/lib/expo-go';
 import {
+  fetchActiveCall,
   fetchConversation,
   fetchMessages,
+  joinCall,
+  leaveCall,
   sendMessage,
+  type ActiveCallParticipant,
   type Message,
 } from '@/lib/api';
 
@@ -50,6 +58,14 @@ export default function ConversationScreen() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [callId, setCallId] = useState<string | null>(null);
+  const [callParticipants, setCallParticipants] = useState<
+    ActiveCallParticipant[]
+  >([]);
+  const [inCall, setInCall] = useState(false);
+  const [isJoiningCall, setIsJoiningCall] = useState(false);
+  const [isMuted, setIsMuted] = useState(false);
+  const callSessionRef = useRef<CallSession | null>(null);
 
   const conversationId = id ?? '';
 
@@ -62,6 +78,8 @@ export default function ConversationScreen() {
     [messages],
   );
 
+  const participantCount = callParticipants.length;
+
   const loadMessages = useCallback(async () => {
     if (!token || !conversationId) {
       return;
@@ -71,14 +89,23 @@ export default function ConversationScreen() {
     setError(null);
 
     try {
-      const [items, conversation] = await Promise.all([
+      const [items, conversation, activeCall] = await Promise.all([
         fetchMessages(token, conversationId),
         fetchConversation(token, conversationId),
+        fetchActiveCall(token, conversationId),
       ]);
       setMessages(items);
       setMemberNames(
         new Map(conversation.members.map((member) => [member.id, member.displayName])),
       );
+
+      if (activeCall) {
+        setCallId(activeCall.call.id);
+        setCallParticipants(activeCall.participants);
+      } else {
+        setCallId(null);
+        setCallParticipants([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load messages');
     } finally {
@@ -102,26 +129,170 @@ export default function ConversationScreen() {
         return;
       }
 
-      setMessages((current) => {
-        if (current.some((message) => message.id === event.payload.messageId)) {
-          return current;
-        }
+      switch (event.type) {
+        case 'message.created':
+          setMessages((current) => {
+            if (current.some((message) => message.id === event.payload.messageId)) {
+              return current;
+            }
 
-        return [
-          ...current,
-          {
-            id: event.payload.messageId,
-            conversationId: event.conversationId,
-            senderId: event.actorId,
-            content: event.payload.content,
-            createdAt: event.timestamp,
-            editedAt: null,
-            deletedAt: null,
-          },
-        ];
-      });
+            return [
+              ...current,
+              {
+                id: event.payload.messageId,
+                conversationId: event.conversationId,
+                senderId: event.actorId,
+                content: event.payload.content,
+                createdAt: event.timestamp,
+                editedAt: null,
+                deletedAt: null,
+              },
+            ];
+          });
+          break;
+
+        case 'call.started':
+          setCallId(event.payload.callId);
+          break;
+
+        case 'call.participant.joined':
+          setCallId(event.payload.callId);
+          setCallParticipants((current) => {
+            const existing = current.find(
+              (participant) => participant.userId === event.payload.userId,
+            );
+
+            if (existing) {
+              return current.map((participant) =>
+                participant.userId === event.payload.userId
+                  ? { ...participant, role: event.payload.role }
+                  : participant,
+              );
+            }
+
+            return [
+              ...current,
+              {
+                userId: event.payload.userId,
+                role: event.payload.role,
+                displayName:
+                  memberNames.get(event.payload.userId) ?? 'Participant',
+                joinedAt: event.timestamp,
+              },
+            ];
+          });
+          break;
+
+        case 'call.participant.left':
+          setCallParticipants((current) =>
+            current.filter(
+              (participant) => participant.userId !== event.payload.userId,
+            ),
+          );
+          break;
+
+        case 'call.ended':
+          setCallId(null);
+          setCallParticipants([]);
+          setInCall(false);
+          void callSessionRef.current?.disconnect();
+          callSessionRef.current = null;
+          break;
+
+        default:
+          break;
+      }
     });
-  }, [conversationId, realtime]);
+  }, [conversationId, memberNames, realtime]);
+
+  useEffect(() => {
+    return () => {
+      void callSessionRef.current?.disconnect();
+      callSessionRef.current = null;
+    };
+  }, []);
+
+  async function handleJoinCall() {
+    if (!token || !conversationId || isJoiningCall) {
+      return;
+    }
+
+    if (Platform.OS !== 'web' && isExpoGo()) {
+      setError(
+        'Group calls need a development build (pnpm --filter mobile run:android). Chat works in Expo Go; use web for call testing.',
+      );
+      return;
+    }
+
+    setIsJoiningCall(true);
+    setError(null);
+
+    try {
+      const credentials = await joinCall(token, conversationId);
+      setCallId(credentials.callId);
+
+      const session = createCallSession();
+      callSessionRef.current = session;
+
+      session.addListener({
+        onParticipantsChanged: (participants: CallParticipantInfo[]) => {
+          setCallParticipants(
+            participants.map((participant: CallParticipantInfo) => ({
+              userId: participant.identity,
+              role: 'publisher',
+              displayName:
+                memberNames.get(participant.identity) ??
+                participant.name ??
+                'Participant',
+              joinedAt: new Date().toISOString(),
+            })),
+          );
+        },
+        onError: (err: Error) => {
+          setError(err.message);
+        },
+      });
+
+      await session.connect(resolveCallMediaUrl(credentials.url), credentials.token);
+      setInCall(true);
+      setIsMuted(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to join call');
+      await callSessionRef.current?.disconnect();
+      callSessionRef.current = null;
+      setInCall(false);
+    } finally {
+      setIsJoiningCall(false);
+    }
+  }
+
+  async function handleLeaveCall() {
+    if (!token || !conversationId) {
+      return;
+    }
+
+    try {
+      await leaveCall(token, conversationId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to leave call');
+    } finally {
+      await callSessionRef.current?.disconnect();
+      callSessionRef.current = null;
+      setInCall(false);
+      setIsMuted(false);
+    }
+  }
+
+  async function handleToggleMute() {
+    const session = callSessionRef.current;
+    if (!session) {
+      return;
+    }
+
+    const nextMuted = !isMuted;
+    await session.setMuted(nextMuted);
+    setIsMuted(nextMuted);
+  }
 
   async function handleSend() {
     if (!token || !conversationId || !draft.trim()) {
@@ -157,12 +328,62 @@ export default function ConversationScreen() {
   }
 
   const composerPaddingBottom = Math.max(insets.bottom, 12);
+  const showCallBar = inCall || callId !== null;
 
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 44 : 0}>
+      {showCallBar ? (
+        <View style={styles.callBar}>
+          <View>
+            <Text style={styles.callTitle}>
+              {inCall ? 'In call' : 'Call active'}
+            </Text>
+            <Text style={styles.callMeta}>
+              {participantCount} participant{participantCount === 1 ? '' : 's'}
+            </Text>
+          </View>
+          <View style={styles.callActions}>
+            {inCall ? (
+              <>
+                <Pressable style={styles.callButton} onPress={() => void handleToggleMute()}>
+                  <Text style={styles.callButtonText}>
+                    {isMuted ? 'Unmute' : 'Mute'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  style={[styles.callButton, styles.leaveButton]}
+                  onPress={() => void handleLeaveCall()}>
+                  <Text style={styles.callButtonText}>Leave</Text>
+                </Pressable>
+              </>
+            ) : (
+              <Pressable
+                style={[styles.callButton, isJoiningCall && styles.sendDisabled]}
+                disabled={isJoiningCall}
+                onPress={() => void handleJoinCall()}>
+                <Text style={styles.callButtonText}>
+                  {isJoiningCall ? 'Joining…' : 'Join call'}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+      ) : (
+        <View style={styles.startCallRow}>
+          <Pressable
+            style={[styles.callButton, isJoiningCall && styles.sendDisabled]}
+            disabled={isJoiningCall}
+            onPress={() => void handleJoinCall()}>
+            <Text style={styles.callButtonText}>
+              {isJoiningCall ? 'Starting…' : 'Start call'}
+            </Text>
+          </Pressable>
+        </View>
+      )}
+
       {isLoading ? (
         <ActivityIndicator style={styles.centered} />
       ) : (
@@ -226,6 +447,49 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0f172a',
+  },
+  callBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    backgroundColor: '#14532d',
+    borderBottomWidth: 1,
+    borderBottomColor: '#166534',
+  },
+  startCallRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#1e293b',
+  },
+  callTitle: {
+    color: '#dcfce7',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  callMeta: {
+    color: '#bbf7d0',
+    marginTop: 2,
+    fontSize: 13,
+  },
+  callActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  callButton: {
+    backgroundColor: '#2563eb',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  leaveButton: {
+    backgroundColor: '#dc2626',
+  },
+  callButtonText: {
+    color: '#ffffff',
+    fontWeight: '600',
   },
   messageList: {
     flex: 1,
