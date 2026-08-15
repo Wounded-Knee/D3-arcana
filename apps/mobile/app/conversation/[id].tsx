@@ -14,16 +14,27 @@ import { Redirect, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
+import { CallTimeline } from '@/components/timeline/call-timeline';
+import {
+  applyOptimisticSample,
+  applyParticipantJoined,
+  applyParticipantLeft,
+  upsertTrackChunk,
+  type TimelineTrack,
+} from '@/components/timeline/timeline-model';
 import { createCallSession, type CallSession } from '@/lib/call';
+import { WaveformSampler } from '@/lib/call/waveform-sampler';
 import type { CallParticipantInfo } from '@/lib/call/types';
 import { resolveCallMediaUrl } from '@/lib/config';
 import { isExpoGo } from '@/lib/expo-go';
 import {
   fetchActiveCall,
+  fetchCallTimeline,
   fetchConversation,
   fetchMessages,
   joinCall,
   leaveCall,
+  postWaveform,
   sendMessage,
   type ActiveCallParticipant,
   type Message,
@@ -65,6 +76,8 @@ export default function ConversationScreen() {
   const [inCall, setInCall] = useState(false);
   const [isJoiningCall, setIsJoiningCall] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [callStartedAt, setCallStartedAt] = useState<string | null>(null);
+  const [timelineTracks, setTimelineTracks] = useState<TimelineTrack[]>([]);
   const callSessionRef = useRef<CallSession | null>(null);
 
   const conversationId = id ?? '';
@@ -89,10 +102,11 @@ export default function ConversationScreen() {
     setError(null);
 
     try {
-      const [items, conversation, activeCall] = await Promise.all([
+      const [items, conversation, activeCall, timeline] = await Promise.all([
         fetchMessages(token, conversationId),
         fetchConversation(token, conversationId),
         fetchActiveCall(token, conversationId),
+        fetchCallTimeline(token, conversationId),
       ]);
       setMessages(items);
       setMemberNames(
@@ -102,9 +116,17 @@ export default function ConversationScreen() {
       if (activeCall) {
         setCallId(activeCall.call.id);
         setCallParticipants(activeCall.participants);
+        setCallStartedAt(activeCall.call.startedAt);
       } else {
         setCallId(null);
         setCallParticipants([]);
+        setCallStartedAt(null);
+        setTimelineTracks([]);
+      }
+
+      if (timeline) {
+        setCallStartedAt(timeline.call.startedAt);
+        setTimelineTracks(timeline.tracks);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load messages');
@@ -153,6 +175,16 @@ export default function ConversationScreen() {
 
         case 'call.started':
           setCallId(event.payload.callId);
+          if (token) {
+            void fetchCallTimeline(token, conversationId).then((timeline) => {
+              if (!timeline) {
+                return;
+              }
+
+              setCallStartedAt(timeline.call.startedAt);
+              setTimelineTracks(timeline.tracks);
+            });
+          }
           break;
 
         case 'call.participant.joined':
@@ -181,6 +213,14 @@ export default function ConversationScreen() {
               },
             ];
           });
+          setTimelineTracks((current) =>
+            applyParticipantJoined(
+              current,
+              event.payload.userId,
+              memberNames.get(event.payload.userId) ?? 'Participant',
+              event.timestamp,
+            ),
+          );
           break;
 
         case 'call.participant.left':
@@ -189,11 +229,16 @@ export default function ConversationScreen() {
               (participant) => participant.userId !== event.payload.userId,
             ),
           );
+          setTimelineTracks((current) =>
+            applyParticipantLeft(current, event.payload.userId, event.timestamp),
+          );
           break;
 
         case 'call.ended':
           setCallId(null);
           setCallParticipants([]);
+          setCallStartedAt(null);
+          setTimelineTracks([]);
           setInCall(false);
           void callSessionRef.current?.disconnect();
           callSessionRef.current = null;
@@ -203,7 +248,73 @@ export default function ConversationScreen() {
           break;
       }
     });
+  }, [conversationId, memberNames, realtime, token]);
+
+  useEffect(() => {
+    if (!realtime || !conversationId) {
+      return;
+    }
+
+    return realtime.onWaveformChunk((chunk) => {
+      if (chunk.conversationId !== conversationId) {
+        return;
+      }
+
+      setTimelineTracks((current) =>
+        upsertTrackChunk(
+          current,
+          chunk.userId,
+          memberNames.get(chunk.userId) ?? 'Participant',
+          chunk.startOffsetMs,
+          chunk.amplitudes,
+        ),
+      );
+    });
   }, [conversationId, memberNames, realtime]);
+
+  useEffect(() => {
+    if (!inCall || !callStartedAt || !token || !conversationId || !user) {
+      return;
+    }
+
+    const session = callSessionRef.current;
+    if (!session) {
+      return;
+    }
+
+    const sampler = new WaveformSampler({
+      startedAtMs: Date.parse(callStartedAt),
+      postBatch: (batch) =>
+        postWaveform(
+          token,
+          conversationId,
+          batch.startOffsetMs,
+          batch.amplitudes,
+        ),
+      onSample: (offsetMs, amplitude) => {
+        setTimelineTracks((current) =>
+          applyOptimisticSample(
+            current,
+            user.id,
+            user.displayName,
+            offsetMs,
+            amplitude,
+          ),
+        );
+      },
+    });
+
+    const unsubscribe = session.addListener({
+      onLocalAudioLevel: (level) => {
+        sampler.push(level);
+      },
+    });
+
+    return () => {
+      unsubscribe();
+      sampler.stop();
+    };
+  }, [callStartedAt, conversationId, inCall, token, user]);
 
   useEffect(() => {
     return () => {
@@ -230,6 +341,12 @@ export default function ConversationScreen() {
     try {
       const credentials = await joinCall(token, conversationId);
       setCallId(credentials.callId);
+
+      const timeline = await fetchCallTimeline(token, conversationId);
+      if (timeline) {
+        setCallStartedAt(timeline.call.startedAt);
+        setTimelineTracks(timeline.tracks);
+      }
 
       const session = createCallSession();
       callSessionRef.current = session;
@@ -329,6 +446,43 @@ export default function ConversationScreen() {
 
   const composerPaddingBottom = Math.max(insets.bottom, 12);
   const showCallBar = inCall || callId !== null;
+  const callControls = (
+    <View style={styles.callHeader}>
+      <View>
+        <Text style={styles.callTitle}>
+          {inCall ? 'In call' : 'Call active'}
+        </Text>
+        <Text style={styles.callMeta}>
+          {participantCount} participant{participantCount === 1 ? '' : 's'}
+        </Text>
+      </View>
+      <View style={styles.callActions}>
+        {inCall ? (
+          <>
+            <Pressable style={styles.callButton} onPress={() => void handleToggleMute()}>
+              <Text style={styles.callButtonText}>
+                {isMuted ? 'Unmute' : 'Mute'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.callButton, styles.leaveButton]}
+              onPress={() => void handleLeaveCall()}>
+              <Text style={styles.callButtonText}>Leave</Text>
+            </Pressable>
+          </>
+        ) : (
+          <Pressable
+            style={[styles.callButton, isJoiningCall && styles.sendDisabled]}
+            disabled={isJoiningCall}
+            onPress={() => void handleJoinCall()}>
+            <Text style={styles.callButtonText}>
+              {isJoiningCall ? 'Joining…' : 'Join call'}
+            </Text>
+          </Pressable>
+        )}
+      </View>
+    </View>
+  );
 
   return (
     <KeyboardAvoidingView
@@ -336,41 +490,15 @@ export default function ConversationScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 44 : 0}>
       {showCallBar ? (
-        <View style={styles.callBar}>
-          <View>
-            <Text style={styles.callTitle}>
-              {inCall ? 'In call' : 'Call active'}
-            </Text>
-            <Text style={styles.callMeta}>
-              {participantCount} participant{participantCount === 1 ? '' : 's'}
-            </Text>
-          </View>
-          <View style={styles.callActions}>
-            {inCall ? (
-              <>
-                <Pressable style={styles.callButton} onPress={() => void handleToggleMute()}>
-                  <Text style={styles.callButtonText}>
-                    {isMuted ? 'Unmute' : 'Mute'}
-                  </Text>
-                </Pressable>
-                <Pressable
-                  style={[styles.callButton, styles.leaveButton]}
-                  onPress={() => void handleLeaveCall()}>
-                  <Text style={styles.callButtonText}>Leave</Text>
-                </Pressable>
-              </>
-            ) : (
-              <Pressable
-                style={[styles.callButton, isJoiningCall && styles.sendDisabled]}
-                disabled={isJoiningCall}
-                onPress={() => void handleJoinCall()}>
-                <Text style={styles.callButtonText}>
-                  {isJoiningCall ? 'Joining…' : 'Join call'}
-                </Text>
-              </Pressable>
-            )}
-          </View>
-        </View>
+        callStartedAt ? (
+          <CallTimeline
+            startedAt={callStartedAt}
+            tracks={timelineTracks}
+            header={callControls}
+          />
+        ) : (
+          <View style={styles.callBar}>{callControls}</View>
+        )
       ) : (
         <View style={styles.startCallRow}>
           <Pressable
@@ -457,6 +585,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#14532d',
     borderBottomWidth: 1,
     borderBottomColor: '#166534',
+  },
+  callHeader: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
   },
   startCallRow: {
     paddingHorizontal: 16,

@@ -353,3 +353,86 @@ export async function fetchActiveCall(
     );
   }
 }
+
+export interface CallTimelineSession {
+  joinedAt: string;
+  leftAt: string | null;
+}
+
+export interface CallTimelineChunk {
+  startOffsetMs: number;
+  sampleRateHz: number;
+  amplitudes: number[];
+}
+
+export interface CallTimelineTrack {
+  userId: string;
+  displayName: string;
+  sessions: CallTimelineSession[];
+  chunks: CallTimelineChunk[];
+}
+
+export interface CallTimelineResponse {
+  call: {
+    id: string;
+    startedAt: string;
+  };
+  tracks: CallTimelineTrack[];
+}
+
+export async function fetchCallTimeline(
+  token: string,
+  conversationId: string,
+): Promise<CallTimelineResponse | null> {
+  const apiBaseUrl = getApiBaseUrl();
+  const url = `${apiBaseUrl}/api/v1/conversations/${conversationId}/calls/active/timeline`;
+
+  try {
+    const response = await fetchWithTimeout(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    const body = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new ApiError(
+        typeof body.error === 'string' ? body.error : 'Request failed',
+        response.status,
+      );
+    }
+
+    return body as CallTimelineResponse;
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+
+    throw new ApiError(
+      error instanceof Error ? error.message : 'Network request failed',
+      0,
+      'network_error',
+    );
+  }
+}
+
+export async function postWaveform(
+  token: string,
+  conversationId: string,
+  startOffsetMs: number,
+  amplitudes: number[],
+): Promise<void> {
+  await request<void>(
+    token,
+    `/api/v1/conversations/${conversationId}/calls/waveform`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ startOffsetMs, amplitudes }),
+    },
+  );
+}

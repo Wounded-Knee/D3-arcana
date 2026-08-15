@@ -1,7 +1,8 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 
 import { db } from "../database.js";
 import {
+  callParticipantSessions,
   callParticipants,
   calls,
   outboxEvents,
@@ -109,6 +110,16 @@ export async function endCall(
       return null;
     }
 
+    await tx
+      .update(callParticipantSessions)
+      .set({ leftAt: new Date() })
+      .where(
+        and(
+          eq(callParticipantSessions.callId, callId),
+          isNull(callParticipantSessions.leftAt),
+        ),
+      );
+
     await tx.insert(outboxEvents).values({
       type: "call.ended",
       aggregateType: "call",
@@ -171,6 +182,11 @@ export async function upsertParticipantJoined(
       return false;
     }
 
+    await tx.insert(callParticipantSessions).values({
+      callId,
+      userId,
+    });
+
     await tx.insert(outboxEvents).values({
       type: "call.participant.joined",
       aggregateType: "call",
@@ -209,6 +225,17 @@ export async function markParticipantLeft(
     if (!updated) {
       return false;
     }
+
+    await tx
+      .update(callParticipantSessions)
+      .set({ leftAt: new Date() })
+      .where(
+        and(
+          eq(callParticipantSessions.callId, callId),
+          eq(callParticipantSessions.userId, userId),
+          isNull(callParticipantSessions.leftAt),
+        ),
+      );
 
     await tx.insert(outboxEvents).values({
       type: "call.participant.left",
@@ -263,4 +290,41 @@ export async function getActiveCallWithParticipants(
 
   const participants = await listActiveParticipants(call.id);
   return { call, participants };
+}
+
+export async function isActiveCallParticipant(
+  callId: string,
+  userId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ userId: callParticipants.userId })
+    .from(callParticipants)
+    .where(
+      and(
+        eq(callParticipants.callId, callId),
+        eq(callParticipants.userId, userId),
+        isNull(callParticipants.leftAt),
+      ),
+    )
+    .limit(1);
+
+  return Boolean(row);
+}
+
+export interface CallParticipantSessionRecord {
+  id: string;
+  callId: string;
+  userId: string;
+  joinedAt: Date;
+  leftAt: Date | null;
+}
+
+export async function listCallParticipantSessions(
+  callId: string,
+): Promise<CallParticipantSessionRecord[]> {
+  return db
+    .select()
+    .from(callParticipantSessions)
+    .where(eq(callParticipantSessions.callId, callId))
+    .orderBy(asc(callParticipantSessions.joinedAt));
 }

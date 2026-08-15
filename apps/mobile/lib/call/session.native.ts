@@ -10,6 +10,7 @@ import type {
   CallSession,
   CallSessionListener,
 } from './types';
+import { startAudioLevelLoop } from './audio-level-loop';
 
 function livekitNative(): typeof import('@livekit/react-native') {
   // Expo Go has no native module — keep this lazy so chat still loads there.
@@ -22,6 +23,7 @@ export class NativeCallSession implements CallSession {
   private muted = false;
   private audioSessionStarted = false;
   private listeners = new Set<CallSessionListener>();
+  private stopAudioLevelLoop: (() => void) | null = null;
 
   async connect(url: string, token: string): Promise<void> {
     await this.disconnect();
@@ -55,6 +57,7 @@ export class NativeCallSession implements CallSession {
       await room.localParticipant.setMicrophoneEnabled(true);
       this.muted = false;
       this.room = room;
+      this.startAudioLevels();
       this.notifyConnection(true);
       this.notifyParticipants();
     } catch (error) {
@@ -64,6 +67,8 @@ export class NativeCallSession implements CallSession {
   }
 
   async disconnect(): Promise<void> {
+    this.stopAudioLevels();
+
     const room = this.room;
     this.room = null;
     this.muted = false;
@@ -127,6 +132,19 @@ export class NativeCallSession implements CallSession {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  private startAudioLevels(): void {
+    this.stopAudioLevels();
+    this.stopAudioLevelLoop = startAudioLevelLoop(
+      () => (this.muted ? 0 : (this.room?.localParticipant.audioLevel ?? 0)),
+      this.listeners,
+    );
+  }
+
+  private stopAudioLevels(): void {
+    this.stopAudioLevelLoop?.();
+    this.stopAudioLevelLoop = null;
   }
 
   private notifyParticipants(): void {

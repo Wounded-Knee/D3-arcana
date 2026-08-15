@@ -2,6 +2,7 @@ import { Stack } from 'expo-router';
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { StatusBar } from 'expo-status-bar';
 import { StyleSheet, View } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -45,15 +46,17 @@ const styles = StyleSheet.create({
 
 export default function RootLayout() {
   return (
-    <SafeAreaProvider>
-      <AuthProvider>
-        <View style={styles.root}>
-          <ServiceStatusBanner />
-          <View style={styles.navigator}>
-            <RootNavigator />
+    <GestureHandlerRootView style={styles.root}>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <View style={styles.root}>
+            <ServiceStatusBanner />
+            <View style={styles.navigator}>
+              <RootNavigator />
+            </View>
           </View>
-        </View>
-      </AuthProvider>
-    </SafeAreaProvider>
+        </AuthProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

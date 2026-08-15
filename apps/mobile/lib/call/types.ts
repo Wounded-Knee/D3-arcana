@@ -7,6 +7,7 @@ export type CallParticipantInfo = {
 export type CallSessionListener = {
   onParticipantsChanged?: (participants: CallParticipantInfo[]) => void;
   onConnectionStateChanged?: (connected: boolean) => void;
+  onLocalAudioLevel?: (level: number) => void;
   onError?: (error: Error) => void;
 };
 

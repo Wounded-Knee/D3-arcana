@@ -1,18 +1,21 @@
 import type { DomainEvent } from '@d3-arcana/events';
 import {
   parseServerMessage,
+  type CallWaveformChunkMessage,
   type ClientMessage,
 } from '@d3-arcana/protocol';
 
 import { getWsBaseUrl } from './config';
 
 export type RealtimeEventHandler = (event: DomainEvent) => void;
+export type WaveformChunkHandler = (chunk: CallWaveformChunkMessage) => void;
 
 export class RealtimeClient {
   private socket: WebSocket | null = null;
   private authenticated = false;
   private joinedConversations = new Set<string>();
   private eventHandlers = new Set<RealtimeEventHandler>();
+  private waveformHandlers = new Set<WaveformChunkHandler>();
 
   constructor(private readonly token: string) {}
 
@@ -45,6 +48,11 @@ export class RealtimeClient {
               handler(message.event);
             }
             break;
+          case 'call.waveform.chunk':
+            for (const handler of this.waveformHandlers) {
+              handler(message);
+            }
+            break;
           default:
             break;
         }
@@ -65,6 +73,13 @@ export class RealtimeClient {
     this.eventHandlers.add(handler);
     return () => {
       this.eventHandlers.delete(handler);
+    };
+  }
+
+  onWaveformChunk(handler: WaveformChunkHandler): () => void {
+    this.waveformHandlers.add(handler);
+    return () => {
+      this.waveformHandlers.delete(handler);
     };
   }
 
@@ -92,6 +107,7 @@ export class RealtimeClient {
     this.authenticated = false;
     this.joinedConversations.clear();
     this.eventHandlers.clear();
+    this.waveformHandlers.clear();
   }
 
   private send(message: ClientMessage): void {

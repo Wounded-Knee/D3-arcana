@@ -85,15 +85,15 @@ export async function createTestServer(
   );
   const { registerConsumers } = await import("../../consumers/index.js");
 
+  const manager = new WebSocketManager();
   const app = express();
   app.use(express.json());
   registerApiRoutes(app);
-  registerCallRoutes(app);
+  registerCallRoutes(app, manager);
   registerHealthRoutes(app);
   app.use(errorHandler);
 
   const server = createServer(app);
-  const manager = new WebSocketManager();
   registerConsumers(manager);
   createWebSocketServer(server, manager);
 

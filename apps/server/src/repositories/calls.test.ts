@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
 import { db } from "../database.js";
-import { calls, callParticipants, outboxEvents } from "../db/schema.js";
+import { callParticipants, outboxEvents } from "../db/schema.js";
 import { createUser } from "./users.js";
 import { createConversation, addConversationMember } from "./conversations.js";
 import {
@@ -10,6 +10,7 @@ import {
   createCall,
   endCall,
   getActiveCallForConversation,
+  listCallParticipantSessions,
   markParticipantLeft,
   upsertParticipantJoined,
 } from "./calls.js";
@@ -82,6 +83,68 @@ describe("calls repository", () => {
       .where(eq(callParticipants.userId, alice.id));
 
     expect(aliceRow.leftAt).not.toBeNull();
+  });
+
+  it("records a new participant session on leave and rejoin", async () => {
+    const { alice, conversation } = await seedConversation();
+    const call = await createCall(conversation.id, alice.id, "audio");
+
+    await upsertParticipantJoined(
+      call.id,
+      conversation.id,
+      alice.id,
+      "publisher",
+    );
+    await markParticipantLeft(call.id, conversation.id, alice.id);
+    await upsertParticipantJoined(
+      call.id,
+      conversation.id,
+      alice.id,
+      "publisher",
+    );
+
+    const sessions = await listCallParticipantSessions(call.id);
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0].leftAt).not.toBeNull();
+    expect(sessions[1].leftAt).toBeNull();
+  });
+
+  it("does not open a second session when already active", async () => {
+    const { alice, conversation } = await seedConversation();
+    const call = await createCall(conversation.id, alice.id, "audio");
+
+    await upsertParticipantJoined(
+      call.id,
+      conversation.id,
+      alice.id,
+      "publisher",
+    );
+    await upsertParticipantJoined(
+      call.id,
+      conversation.id,
+      alice.id,
+      "publisher",
+    );
+
+    const sessions = await listCallParticipantSessions(call.id);
+    expect(sessions).toHaveLength(1);
+  });
+
+  it("closes open sessions when the call ends", async () => {
+    const { alice, conversation } = await seedConversation();
+    const call = await createCall(conversation.id, alice.id, "audio");
+
+    await upsertParticipantJoined(
+      call.id,
+      conversation.id,
+      alice.id,
+      "publisher",
+    );
+    await endCall(call.id, alice.id, "empty_room");
+
+    const sessions = await listCallParticipantSessions(call.id);
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].leftAt).not.toBeNull();
   });
 
   it("ends a call and emits call.ended", async () => {

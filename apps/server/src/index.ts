@@ -29,7 +29,9 @@ registerDevRequestLogger(app);
 registerLiveKitWebhookRoute(app);
 app.use(express.json());
 registerApiRoutes(app);
-registerCallRoutes(app);
+
+const webSocketManager = new WebSocketManager();
+registerCallRoutes(app, webSocketManager);
 registerHealthRoutes(app);
 
 if (process.env.NODE_ENV !== "production") {
@@ -41,7 +43,6 @@ if (process.env.NODE_ENV !== "production") {
 app.use(errorHandler);
 
 const server = createServer(app);
-const webSocketManager = new WebSocketManager();
 registerConsumers(webSocketManager);
 createWebSocketServer(server, webSocketManager);
 

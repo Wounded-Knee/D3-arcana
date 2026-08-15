@@ -1,5 +1,8 @@
 import { sql } from "drizzle-orm";
 import {
+    customType,
+    index,
+    integer,
     jsonb,
     pgTable,
     text,
@@ -8,6 +11,12 @@ import {
     uniqueIndex,
     uuid,
   } from "drizzle-orm/pg-core";
+
+  const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+    dataType() {
+      return "bytea";
+    },
+  });
   
   export const eventConsumptions = pgTable(
     "event_consumptions",
@@ -196,6 +205,68 @@ import {
     (table) => [
       primaryKey({
         columns: [table.callId, table.userId],
+      }),
+    ],
+  );
+
+  export const callParticipantSessions = pgTable(
+    "call_participant_sessions",
+    {
+      id: uuid("id").defaultRandom().primaryKey(),
+
+      callId: uuid("call_id")
+        .notNull()
+        .references(() => calls.id, {
+          onDelete: "cascade",
+        }),
+
+      userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id, {
+          onDelete: "cascade",
+        }),
+
+      joinedAt: timestamp("joined_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+
+      leftAt: timestamp("left_at", {
+        withTimezone: true,
+      }),
+    },
+    (table) => [
+      index("call_participant_sessions_call_user_joined_idx").on(
+        table.callId,
+        table.userId,
+        table.joinedAt,
+      ),
+    ],
+  );
+
+  export const callWaveformChunks = pgTable(
+    "call_waveform_chunks",
+    {
+      callId: uuid("call_id")
+        .notNull()
+        .references(() => calls.id, {
+          onDelete: "cascade",
+        }),
+
+      userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id, {
+          onDelete: "cascade",
+        }),
+
+      startOffsetMs: integer("start_offset_ms").notNull(),
+
+      sampleRateHz: integer("sample_rate_hz").notNull(),
+
+      amplitudes: bytea("amplitudes").notNull(),
+    },
+    (table) => [
+      primaryKey({
+        columns: [table.callId, table.userId, table.startOffsetMs],
       }),
     ],
   );

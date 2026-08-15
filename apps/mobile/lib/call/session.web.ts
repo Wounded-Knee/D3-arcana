@@ -10,11 +10,13 @@ import type {
   CallSession,
   CallSessionListener,
 } from './types';
+import { startAudioLevelLoop } from './audio-level-loop';
 
 export class WebCallSession implements CallSession {
   private room: Room | null = null;
   private muted = false;
   private listeners = new Set<CallSessionListener>();
+  private stopAudioLevelLoop: (() => void) | null = null;
 
   async connect(url: string, token: string): Promise<void> {
     await this.disconnect();
@@ -44,11 +46,14 @@ export class WebCallSession implements CallSession {
     await room.localParticipant.setMicrophoneEnabled(true);
     this.muted = false;
     this.room = room;
+    this.startAudioLevels();
     this.notifyConnection(true);
     this.notifyParticipants();
   }
 
   async disconnect(): Promise<void> {
+    this.stopAudioLevels();
+
     if (!this.room) {
       return;
     }
@@ -108,6 +113,19 @@ export class WebCallSession implements CallSession {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  private startAudioLevels(): void {
+    this.stopAudioLevels();
+    this.stopAudioLevelLoop = startAudioLevelLoop(
+      () => (this.muted ? 0 : (this.room?.localParticipant.audioLevel ?? 0)),
+      this.listeners,
+    );
+  }
+
+  private stopAudioLevels(): void {
+    this.stopAudioLevelLoop?.();
+    this.stopAudioLevelLoop = null;
   }
 
   private notifyParticipants(): void {
