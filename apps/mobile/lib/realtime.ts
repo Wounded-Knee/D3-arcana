@@ -1,18 +1,31 @@
-import type { MessageCreatedEvent } from '@d3-arcana/events';
+import type { DomainEvent } from '@d3-arcana/events';
 import {
   parseServerMessage,
+  type CallCatchupSafeToJoinLiveMessage,
+  type CallRecordingFragmentMessage,
+  type CallWaveformChunkMessage,
   type ClientMessage,
 } from '@d3-arcana/protocol';
 
 import { getWsBaseUrl } from './config';
 
-export type RealtimeEventHandler = (event: MessageCreatedEvent) => void;
+export type RealtimeEventHandler = (event: DomainEvent) => void;
+export type WaveformChunkHandler = (chunk: CallWaveformChunkMessage) => void;
+export type RecordingFragmentHandler = (
+  fragment: CallRecordingFragmentMessage,
+) => void;
+export type CatchupSafeHandler = (
+  message: CallCatchupSafeToJoinLiveMessage,
+) => void;
 
 export class RealtimeClient {
   private socket: WebSocket | null = null;
   private authenticated = false;
   private joinedConversations = new Set<string>();
   private eventHandlers = new Set<RealtimeEventHandler>();
+  private waveformHandlers = new Set<WaveformChunkHandler>();
+  private fragmentHandlers = new Set<RecordingFragmentHandler>();
+  private catchupHandlers = new Set<CatchupSafeHandler>();
 
   constructor(private readonly token: string) {}
 
@@ -41,10 +54,23 @@ export class RealtimeClient {
             }
             break;
           case 'event':
-            if (message.event.type === 'message.created') {
-              for (const handler of this.eventHandlers) {
-                handler(message.event);
-              }
+            for (const handler of this.eventHandlers) {
+              handler(message.event);
+            }
+            break;
+          case 'call.waveform.chunk':
+            for (const handler of this.waveformHandlers) {
+              handler(message);
+            }
+            break;
+          case 'call.recording.fragment':
+            for (const handler of this.fragmentHandlers) {
+              handler(message);
+            }
+            break;
+          case 'call.catchup.safeToJoinLive':
+            for (const handler of this.catchupHandlers) {
+              handler(message);
             }
             break;
           default:
@@ -67,6 +93,27 @@ export class RealtimeClient {
     this.eventHandlers.add(handler);
     return () => {
       this.eventHandlers.delete(handler);
+    };
+  }
+
+  onWaveformChunk(handler: WaveformChunkHandler): () => void {
+    this.waveformHandlers.add(handler);
+    return () => {
+      this.waveformHandlers.delete(handler);
+    };
+  }
+
+  onRecordingFragment(handler: RecordingFragmentHandler): () => void {
+    this.fragmentHandlers.add(handler);
+    return () => {
+      this.fragmentHandlers.delete(handler);
+    };
+  }
+
+  onCatchupSafeToJoinLive(handler: CatchupSafeHandler): () => void {
+    this.catchupHandlers.add(handler);
+    return () => {
+      this.catchupHandlers.delete(handler);
     };
   }
 
@@ -94,6 +141,9 @@ export class RealtimeClient {
     this.authenticated = false;
     this.joinedConversations.clear();
     this.eventHandlers.clear();
+    this.waveformHandlers.clear();
+    this.fragmentHandlers.clear();
+    this.catchupHandlers.clear();
   }
 
   private send(message: ClientMessage): void {

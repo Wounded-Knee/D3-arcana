@@ -4,6 +4,6 @@
   "scripts": {
     "dev:mobile": "pnpm --filter mobile start",
     "dev:server": "pnpm --filter server dev",
-    "dev": "node scripts/dev-help.mjs"
+    "dev:livekit": "bash scripts/livekit-up.sh"
   }
 }

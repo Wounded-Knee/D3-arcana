@@ -7,6 +7,12 @@ export async function truncateAll(): Promise<void> {
     TRUNCATE TABLE
       event_consumptions,
       outbox_events,
+      call_waveform_chunks,
+      call_recording_fragments,
+      call_recordings,
+      call_participant_sessions,
+      call_participants,
+      calls,
       messages,
       conversation_members,
       conversations,

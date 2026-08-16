@@ -1,11 +1,22 @@
+import { sql } from "drizzle-orm";
 import {
+    customType,
+    index,
+    integer,
     jsonb,
     pgTable,
     text,
     timestamp,
     primaryKey,
+    uniqueIndex,
     uuid,
   } from "drizzle-orm/pg-core";
+
+  const bytea = customType<{ data: Buffer; driverData: Buffer }>({
+    dataType() {
+      return "bytea";
+    },
+  });
   
   export const eventConsumptions = pgTable(
     "event_consumptions",
@@ -131,3 +142,237 @@ import {
       withTimezone: true,
     }),
   });
+
+  export const calls = pgTable(
+    "calls",
+    {
+      id: uuid("id").defaultRandom().primaryKey(),
+
+      conversationId: uuid("conversation_id")
+        .notNull()
+        .references(() => conversations.id, {
+          onDelete: "cascade",
+        }),
+
+      startedBy: uuid("started_by")
+        .notNull()
+        .references(() => users.id),
+
+      status: text("status").notNull(),
+
+      mediaMode: text("media_mode").notNull(),
+
+      startedAt: timestamp("started_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+
+      endedAt: timestamp("ended_at", {
+        withTimezone: true,
+      }),
+    },
+    (table) => [
+      uniqueIndex("calls_one_active_per_conversation_idx")
+        .on(table.conversationId)
+        .where(sql`${table.status} = 'active'`),
+    ],
+  );
+
+  export const callParticipants = pgTable(
+    "call_participants",
+    {
+      callId: uuid("call_id")
+        .notNull()
+        .references(() => calls.id, {
+          onDelete: "cascade",
+        }),
+
+      userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id, {
+          onDelete: "cascade",
+        }),
+
+      role: text("role").notNull(),
+
+      joinedAt: timestamp("joined_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+
+      leftAt: timestamp("left_at", {
+        withTimezone: true,
+      }),
+    },
+    (table) => [
+      primaryKey({
+        columns: [table.callId, table.userId],
+      }),
+    ],
+  );
+
+  export const callParticipantSessions = pgTable(
+    "call_participant_sessions",
+    {
+      id: uuid("id").defaultRandom().primaryKey(),
+
+      callId: uuid("call_id")
+        .notNull()
+        .references(() => calls.id, {
+          onDelete: "cascade",
+        }),
+
+      userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id, {
+          onDelete: "cascade",
+        }),
+
+      joinedAt: timestamp("joined_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+
+      leftAt: timestamp("left_at", {
+        withTimezone: true,
+      }),
+    },
+    (table) => [
+      index("call_participant_sessions_call_user_joined_idx").on(
+        table.callId,
+        table.userId,
+        table.joinedAt,
+      ),
+    ],
+  );
+
+  export const callWaveformChunks = pgTable(
+    "call_waveform_chunks",
+    {
+      callId: uuid("call_id")
+        .notNull()
+        .references(() => calls.id, {
+          onDelete: "cascade",
+        }),
+
+      userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id, {
+          onDelete: "cascade",
+        }),
+
+      startOffsetMs: integer("start_offset_ms").notNull(),
+
+      sampleRateHz: integer("sample_rate_hz").notNull(),
+
+      amplitudes: bytea("amplitudes").notNull(),
+    },
+    (table) => [
+      primaryKey({
+        columns: [table.callId, table.userId, table.startOffsetMs],
+      }),
+    ],
+  );
+
+  export const callRecordings = pgTable(
+    "call_recordings",
+    {
+      id: uuid("id").defaultRandom().primaryKey(),
+
+      callId: uuid("call_id")
+        .notNull()
+        .references(() => calls.id, {
+          onDelete: "cascade",
+        }),
+
+      conversationId: uuid("conversation_id")
+        .notNull()
+        .references(() => conversations.id, {
+          onDelete: "cascade",
+        }),
+
+      userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id, {
+          onDelete: "cascade",
+        }),
+
+      callOffsetMs: integer("call_offset_ms").notNull(),
+
+      status: text("status").notNull(),
+
+      objectKey: text("object_key").notNull(),
+
+      contentType: text("content_type").notNull(),
+
+      format: text("format").notNull(),
+
+      providerEgressId: text("provider_egress_id"),
+
+      providerTrackSid: text("provider_track_sid").notNull(),
+
+      durationMs: integer("duration_ms"),
+
+      sizeBytes: integer("size_bytes"),
+
+      startedAt: timestamp("started_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+
+      endedAt: timestamp("ended_at", {
+        withTimezone: true,
+      }),
+
+      error: text("error"),
+    },
+    (table) => [
+      uniqueIndex("call_recordings_one_active_per_track_idx")
+        .on(table.callId, table.providerTrackSid)
+        .where(sql`${table.status} IN ('starting', 'recording')`),
+      index("call_recordings_call_user_offset_idx").on(
+        table.callId,
+        table.userId,
+        table.callOffsetMs,
+      ),
+    ],
+  );
+
+  export const callRecordingFragments = pgTable(
+    "call_recording_fragments",
+    {
+      id: uuid("id").defaultRandom().primaryKey(),
+
+      recordingId: uuid("recording_id")
+        .notNull()
+        .references(() => callRecordings.id, {
+          onDelete: "cascade",
+        }),
+
+      callId: uuid("call_id")
+        .notNull()
+        .references(() => calls.id, {
+          onDelete: "cascade",
+        }),
+
+      userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id, {
+          onDelete: "cascade",
+        }),
+
+      callOffsetMs: integer("call_offset_ms").notNull(),
+
+      durationMs: integer("duration_ms").notNull(),
+
+      objectKey: text("object_key").notNull(),
+
+      sizeBytes: integer("size_bytes").notNull(),
+    },
+    (table) => [
+      index("call_recording_fragments_call_offset_idx").on(
+        table.callId,
+        table.callOffsetMs,
+      ),
+      index("call_recording_fragments_recording_offset_idx").on(
+        table.recordingId,
+        table.callOffsetMs,
+      ),
+    ],
+  );

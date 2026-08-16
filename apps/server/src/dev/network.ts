@@ -1,9 +1,16 @@
 import { networkInterfaces } from "node:os";
 
-export function getLanAddresses(): string[] {
-  const addresses = new Set<string>();
+const VIRTUAL_IFACE = /^(docker|br-|veth|cni|flannel|virbr|lxc|tun|tap)/;
 
-  for (const interfaces of Object.values(networkInterfaces())) {
+export interface LanInterfaceAddress {
+  name: string;
+  address: string;
+}
+
+export function listLanAddresses(): LanInterfaceAddress[] {
+  const addresses: LanInterfaceAddress[] = [];
+
+  for (const [name, interfaces] of Object.entries(networkInterfaces())) {
     if (!interfaces) {
       continue;
     }
@@ -13,15 +20,37 @@ export function getLanAddresses(): string[] {
         continue;
       }
 
-      addresses.add(iface.address);
+      addresses.push({ name, address: iface.address });
     }
   }
 
-  return [...addresses];
+  return addresses;
+}
+
+export function getLanAddresses(): string[] {
+  return [...new Set(listLanAddresses().map((entry) => entry.address))];
+}
+
+export function pickPreferredLanAddress(
+  interfaces: LanInterfaceAddress[],
+): string | undefined {
+  const physical = interfaces.filter((entry) => !VIRTUAL_IFACE.test(entry.name));
+  const pool = physical.length > 0 ? physical : interfaces;
+
+  return (
+    pool.find((entry) => entry.address.startsWith("192.168."))?.address ??
+    pool.find((entry) => entry.address.startsWith("10."))?.address ??
+    pool[0]?.address
+  );
+}
+
+export function getPreferredLanAddress(): string | undefined {
+  return pickPreferredLanAddress(listLanAddresses());
 }
 
 export function logDevelopmentEndpoints(port: number | string): void {
   const lanAddresses = getLanAddresses();
+  const preferred = getPreferredLanAddress();
 
   console.log(`Server listening on port ${port}`);
 
@@ -33,13 +62,14 @@ export function logDevelopmentEndpoints(port: number | string): void {
   console.log("Development endpoints:");
 
   for (const address of lanAddresses) {
-    console.log(`  http://${address}:${port}/health`);
+    const marker = address === preferred ? " (preferred LAN)" : "";
+    console.log(`  http://${address}:${port}/health${marker}`);
   }
 
-  console.log(`  ws://${lanAddresses[0] ?? "localhost"}:${port}/ws`);
+  console.log(`  ws://${preferred ?? lanAddresses[0] ?? "localhost"}:${port}/ws`);
   console.log("");
   console.log(
-    "Mobile app API host should match Metro (e.g. http://192.168.x.x:3000).",
+    "Mobile API/LiveKit hosts follow Metro (--lan). Do not bake LAN IPs into apps/mobile/.env.",
   );
 
   if (!process.env.DEV_AUTH_TOKENS?.trim()) {

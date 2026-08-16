@@ -1,0 +1,18 @@
+port: 7880
+rtc:
+  tcp_port: 7881
+  # Avoid 50000-50100 — browsers (Firefox/Chrome WebRTC) often bind there and block Docker.
+  port_range_start: 55000
+  port_range_end: 55020
+  use_external_ip: false
+  # ICE advertise IP is passed as --node-ip (see scripts/livekit-up.sh).
+  # Default 127.0.0.1 is fine for same-PC browsers.
+redis:
+  address: 127.0.0.1:6379
+keys:
+  devkey: devsecret
+webhook:
+  api_key: devkey
+  urls:
+    # host network: LiveKit and the API share the PC loopback
+    - http://127.0.0.1:3000/webhooks/livekit

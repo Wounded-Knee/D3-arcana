@@ -17,8 +17,9 @@ import {
 } from '@/lib/api';
 
 export default function ConversationsScreen() {
-  const { user, token, signOut } = useAuth();
+  const { user, token, signOut, realtime } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeCalls, setActiveCalls] = useState<Set<string>>(() => new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -43,6 +44,33 @@ export default function ConversationsScreen() {
   useEffect(() => {
     void loadConversations();
   }, [loadConversations]);
+
+  useEffect(() => {
+    if (!realtime) {
+      return;
+    }
+
+    return realtime.onEvent((event) => {
+      switch (event.type) {
+        case 'call.started':
+          setActiveCalls((current) => {
+            const next = new Set(current);
+            next.add(event.conversationId);
+            return next;
+          });
+          break;
+        case 'call.ended':
+          setActiveCalls((current) => {
+            const next = new Set(current);
+            next.delete(event.conversationId);
+            return next;
+          });
+          break;
+        default:
+          break;
+      }
+    });
+  }, [realtime]);
 
   if (!user || !token) {
     return <Redirect href={'/login' as Href} />;
@@ -76,6 +104,9 @@ export default function ConversationsScreen() {
             <Link href={`/conversation/${item.id}` as Href} asChild>
               <Pressable style={styles.card}>
                 <Text style={styles.cardTitle}>{item.name}</Text>
+                {activeCalls.has(item.id) ? (
+                  <Text style={styles.callActive}>Call active</Text>
+                ) : null}
                 <Text style={styles.cardMeta}>
                   {new Date(item.createdAt).toLocaleString()}
                 </Text>
@@ -128,6 +159,11 @@ const styles = StyleSheet.create({
     color: '#f8fafc',
     fontSize: 18,
     fontWeight: '600',
+  },
+  callActive: {
+    color: '#4ade80',
+    fontWeight: '600',
+    marginTop: 4,
   },
   cardMeta: {
     color: '#94a3b8',

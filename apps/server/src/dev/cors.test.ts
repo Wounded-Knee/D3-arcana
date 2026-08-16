@@ -54,6 +54,31 @@ describe("dev CORS", () => {
     expect(response.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
+  it("allows GET requests from a LAN Expo web origin", async () => {
+    const app = createCorsTestApp();
+
+    const response = await request(app)
+      .get("/health")
+      .set("Origin", "http://192.168.1.50:8081")
+      .expect(200);
+
+    expect(response.body).toEqual({ status: "ok" });
+    expect(response.headers["access-control-allow-origin"]).toBe(
+      "http://192.168.1.50:8081",
+    );
+  });
+
+  it("does not allow public internet origins", async () => {
+    const app = createCorsTestApp();
+
+    const response = await request(app)
+      .get("/health")
+      .set("Origin", "http://203.0.113.10:8081")
+      .expect(200);
+
+    expect(response.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
   it("allows Authorization in preflight requests", async () => {
     const app = createCorsTestApp();
 

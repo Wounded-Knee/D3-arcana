@@ -1,4 +1,3 @@
-import type { Server as HttpServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 
 import {
@@ -36,14 +35,8 @@ function sendError(
   });
 }
 
-export function createWebSocketServer(
-  server: HttpServer,
-  manager: WebSocketManager,
-) {
-  const wss = new WebSocketServer({
-    server,
-    path: "/ws",
-  });
+export function createWebSocketServer(manager: WebSocketManager) {
+  const wss = new WebSocketServer({ noServer: true });
 
   wss.on("connection", (socket) => {
     console.log("[ws] client connected");

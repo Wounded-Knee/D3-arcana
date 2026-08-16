@@ -24,6 +24,11 @@ export const conversationIdParamSchema = z.object({
   conversationId: z.uuid(),
 });
 
+export const conversationCallParamsSchema = z.object({
+  conversationId: z.uuid(),
+  callId: z.uuid(),
+});
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

@@ -57,6 +57,34 @@ export const eventMessageSchema = z.object({
   event: domainEventSchema,
 });
 
+export const callWaveformChunkMessageSchema = z.object({
+  type: z.literal("call.waveform.chunk"),
+  conversationId: z.uuid(),
+  callId: z.uuid(),
+  userId: z.uuid(),
+  startOffsetMs: z.number().int().nonnegative(),
+  sampleRateHz: z.number().int().positive(),
+  amplitudes: z.array(z.number().int().min(0).max(255)).max(20),
+});
+
+export const callRecordingFragmentMessageSchema = z.object({
+  type: z.literal("call.recording.fragment"),
+  conversationId: z.uuid(),
+  callId: z.uuid(),
+  userId: z.uuid(),
+  fragmentId: z.uuid(),
+  callOffsetMs: z.number().int().nonnegative(),
+  durationMs: z.number().int().nonnegative(),
+  playbackUrl: z.string().min(1),
+});
+
+export const callCatchupSafeToJoinLiveMessageSchema = z.object({
+  type: z.literal("call.catchup.safeToJoinLive"),
+  conversationId: z.uuid(),
+  callId: z.uuid(),
+  atCallOffsetMs: z.number().int().nonnegative(),
+});
+
 export const serverMessageSchema = z.discriminatedUnion(
   "type",
   [
@@ -66,6 +94,9 @@ export const serverMessageSchema = z.discriminatedUnion(
     conversationLeftSchema,
     errorMessageSchema,
     eventMessageSchema,
+    callWaveformChunkMessageSchema,
+    callRecordingFragmentMessageSchema,
+    callCatchupSafeToJoinLiveMessageSchema,
   ],
 );
 
@@ -85,4 +116,13 @@ export type ErrorMessage = z.infer<typeof errorMessageSchema>;
 export type MessageCreatedWireEvent = MessageCreatedEvent;
 export type DomainWireEvent = DomainEvent;
 export type EventMessage = z.infer<typeof eventMessageSchema>;
+export type CallWaveformChunkMessage = z.infer<
+  typeof callWaveformChunkMessageSchema
+>;
+export type CallRecordingFragmentMessage = z.infer<
+  typeof callRecordingFragmentMessageSchema
+>;
+export type CallCatchupSafeToJoinLiveMessage = z.infer<
+  typeof callCatchupSafeToJoinLiveMessageSchema
+>;
 export type ServerMessage = z.infer<typeof serverMessageSchema>;
