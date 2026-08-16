@@ -43,6 +43,20 @@
       "when": 1786764674545,
       "tag": "0005_gorgeous_doctor_faustus",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786827418396,
+      "tag": "0006_stormy_thunderbolt_ross",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786843841370,
+      "tag": "0007_common_veda",
+      "breakpoints": true
     }
   ]
 }

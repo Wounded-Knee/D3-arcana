@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { TimelineTrack } from './timeline-model';
 import { WaveformBars } from './waveform-bars';
@@ -12,6 +12,8 @@ type ParticipantTrackProps = {
   viewStartMs: number;
   msPerPixel: number;
   callStartedAtMs: number;
+  solo?: boolean;
+  onPressLabel?: () => void;
 };
 
 export function ParticipantTrack({
@@ -20,16 +22,21 @@ export function ParticipantTrack({
   viewStartMs,
   msPerPixel,
   callStartedAtMs,
+  solo = false,
+  onPressLabel,
 }: ParticipantTrackProps) {
   const waveformWidth = Math.max(0, width - LABEL_WIDTH);
 
   return (
     <View style={styles.row}>
-      <View style={styles.label}>
-        <Text style={styles.labelText} numberOfLines={1}>
+      <Pressable
+        style={[styles.label, solo && styles.labelSolo]}
+        onPress={onPressLabel}
+      >
+        <Text style={[styles.labelText, solo && styles.labelTextSolo]} numberOfLines={1}>
           {track.displayName}
         </Text>
-      </View>
+      </Pressable>
       <View style={[styles.waveform, { width: waveformWidth }]}>
         <WaveformBars
           width={waveformWidth}
@@ -58,10 +65,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: '#14532d',
   },
+  labelSolo: {
+    backgroundColor: '#22c55e',
+  },
   labelText: {
     color: '#dcfce7',
     fontSize: 12,
     fontWeight: '600',
+  },
+  labelTextSolo: {
+    color: '#052e16',
   },
   waveform: {
     backgroundColor: '#052e16',

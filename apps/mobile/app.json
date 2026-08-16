@@ -35,6 +35,7 @@
     },
     "plugins": [
       "expo-router",
+      "expo-audio",
       "@livekit/react-native-expo-plugin",
       "@config-plugins/react-native-webrtc",
       [

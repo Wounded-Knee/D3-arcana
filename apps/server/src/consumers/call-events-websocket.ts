@@ -2,7 +2,12 @@ import type {
   CallEndedEvent,
   CallParticipantJoinedEvent,
   CallParticipantLeftEvent,
+  CallRecordingCompletedEvent,
+  CallRecordingFailedEvent,
+  CallRecordingRestoredEvent,
+  CallRecordingStartedEvent,
   CallStartedEvent,
+  DomainEvent,
 } from "@d3-arcana/events";
 
 import {
@@ -13,15 +18,9 @@ import type { WebSocketManager } from "../realtime/websocket-manager.js";
 
 const CONSUMER_NAME = "call-events-websocket-consumer";
 
-type CallEvent =
-  | CallStartedEvent
-  | CallParticipantJoinedEvent
-  | CallParticipantLeftEvent
-  | CallEndedEvent;
-
 async function broadcastCallEvent(
   manager: WebSocketManager,
-  event: CallEvent,
+  event: DomainEvent,
 ): Promise<void> {
   if (await hasProcessedEvent(CONSUMER_NAME, event.eventId)) {
     console.log(
@@ -49,6 +48,14 @@ export function createCallEventsWebSocketHandler(
     handleCallParticipantLeft: (event: CallParticipantLeftEvent) =>
       broadcastCallEvent(manager, event),
     handleCallEnded: (event: CallEndedEvent) =>
+      broadcastCallEvent(manager, event),
+    handleCallRecordingStarted: (event: CallRecordingStartedEvent) =>
+      broadcastCallEvent(manager, event),
+    handleCallRecordingCompleted: (event: CallRecordingCompletedEvent) =>
+      broadcastCallEvent(manager, event),
+    handleCallRecordingFailed: (event: CallRecordingFailedEvent) =>
+      broadcastCallEvent(manager, event),
+    handleCallRecordingRestored: (event: CallRecordingRestoredEvent) =>
       broadcastCallEvent(manager, event),
   };
 }

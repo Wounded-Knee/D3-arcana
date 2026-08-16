@@ -12,6 +12,9 @@ LAN IPs are detected at runtime. Do not bake `192.168.x.x` into `apps/mobile/.en
 | Metro | `expo start --lan` (`:8081`) |
 | LiveKit signaling | Same Metro host on port 7880, or the join API URL if that is not loopback |
 | LiveKit ICE (`node_ip`) | `pnpm dev:livekit` sets `--node-ip` from the PC default-route IPv4. The SFU uses Docker host networking so those ports bind on the PC, not Docker NAT. |
+| Redis | Loopback `127.0.0.1:6379`. LiveKit and Egress share it for worker registration. |
+| MinIO (recordings) | API `0.0.0.0:9000` (console loopback `:9001`). The server writes via `OBJECT_STORE_ENDPOINT` (`127.0.0.1:9000`). Presigned playback URLs use `OBJECT_STORE_PUBLIC_ENDPOINT` or `http://<preferred-lan-ip>:9000`. |
+| LiveKit Egress | Host-networked `livekit/egress`. Starts a per-microphone track file into the MinIO bucket. |
 
 On **web**, `localhost` works when you open `http://localhost:8081` on the same PC.
 
@@ -20,7 +23,7 @@ For **LAN-wide web**, start with `pnpm --filter mobile web` (`--lan`) and open `
 ## Start stack
 
 ```bash
-# LiveKit SFU (detects current LAN IP for phone ICE)
+# LiveKit SFU + Redis + Egress + MinIO (detects current LAN IP for phone ICE)
 pnpm dev:livekit
 
 # Apply DB migrations (after schema changes)
@@ -48,9 +51,27 @@ LIVEKIT_API_KEY=devkey
 LIVEKIT_API_SECRET=devsecret
 LIVEKIT_WEBHOOK_SECRET=devsecret
 CALL_EMPTY_GRACE_MS=45000
+
+OBJECT_STORE_ENDPOINT=http://127.0.0.1:9000
+# Optional. Omit to advertise http://<preferred-lan-ip>:9000 in presigned playback URLs.
+# OBJECT_STORE_PUBLIC_ENDPOINT=http://192.168.1.50:9000
+OBJECT_STORE_BUCKET=arcana-recordings
+OBJECT_STORE_ACCESS_KEY=minio
+OBJECT_STORE_SECRET_KEY=minio12345
+OBJECT_STORE_REGION=us-east-1
+OBJECT_STORE_FORCE_PATH_STYLE=true
+
+EGRESS_INGEST_URL=ws://127.0.0.1:3000/internal/egress
+EGRESS_INGEST_SECRET=dev-egress-secret
 ```
 
 `LIVEKIT_URL` stays on loopback (server → LiveKit control plane on the same PC).
+
+`pnpm dev:livekit` also starts Redis (`6379`), MinIO (`9000`/`9001`), and LiveKit Egress. Each published microphone is copied over a websocket to the API as 48 kHz stereo `s16le`, which is filed as **500ms WAV clips** in MinIO. Postgres stores the session plus fragment index. A clip is playable as soon as it is closed (~0.5s behind live). Recording is best-effort: a down MinIO/Egress does not block join. Failed and restored sessions emit `call.recording.failed` / `call.recording.restored`.
+
+While someone scrubs the past, live remote audio is muted. **Return to live** plays missed clips at 1.75×, then rides 1× at the 0.5s ready edge. The API jumps that client to live WebRTC only after ~0.6s of group silence in the open buffer. **Jump to live** skips immediately and may clip a word.
+
+Allow TCP 9000 from the phone and from LAN browsers. The console stays on loopback (`:9001`).
 
 ## Client env
 
@@ -76,7 +97,7 @@ Prerequisites (one-time): Android Studio + SDK, USB debugging enabled. Prefer ph
 pnpm --filter mobile run:android
 ```
 
-That prebuilds `apps/mobile/android/` (gitignored), compiles, `adb install`s, and starts Metro. Rebuild after native dependency or config-plugin changes (`run:android` again, or `expo prebuild --clean` then run).
+That prebuilds `apps/mobile/android/` (gitignored), compiles, `adb install`s, and starts Metro. Rebuild after native dependency or config-plugin changes (`run:android` again, or `expo prebuild --clean` then run). Timeline playback uses `expo-audio`; a JS reload is not enough after adding or upgrading it.
 
 ### Daily JS-only development
 
@@ -97,7 +118,7 @@ If join still fails with `could not establish pc connection` on a phone:
 1. Rebuild the native APK (`pnpm --filter mobile run:android`). JS reload is not enough — Android WebRTC must enumerate the hotspot/tethering interface.
 2. Do not rely on cellular/VPN for media. Signaling can use the LAN while ICE binds to `10.x` (cellular) and never reaches the PC.
 
-Allow TCP 3000, 7880, 7881 and UDP 55000–55020 from the phone on the host firewall.
+Allow TCP 3000, 7880, 7881, 9000 and UDP 55000–55020 from the phone on the host firewall.
 
 ### Verify (phone + web)
 
@@ -105,6 +126,7 @@ Allow TCP 3000, 7880, 7881 and UDP 55000–55020 from the phone on the host fire
 2. Open the same conversation.
 3. Join call → allow microphone → hear audio both ways.
 4. Leave → call ends after grace period when empty.
+5. The timeline stays mounted. Scrub, press play, or select a range. Solo a track from its label.
 
 ## Verify (web)
 
@@ -112,3 +134,4 @@ Allow TCP 3000, 7880, 7881 and UDP 55000–55020 from the phone on the host fire
 2. Open the same conversation.
 3. Join call → allow microphone → hear audio both ways.
 4. Leave → call ends after grace period when empty.
+5. The timeline stays mounted. Scrub, press play, or select a range. Solo a track from its label.

@@ -4,6 +4,7 @@ import {
   getCallById,
 } from "../repositories/calls.js";
 import { getMediaSessionProvider } from "../media/media-provider-instance.js";
+import { stopCallRecordings } from "./recording-lifecycle.js";
 
 const DEFAULT_GRACE_MS = 45_000;
 
@@ -64,6 +65,12 @@ async function finalizeEmptyCall(callId: string): Promise<void> {
   const ended = await endCall(callId, call.startedBy, "empty_room");
   if (!ended) {
     return;
+  }
+
+  try {
+    await stopCallRecordings(callId);
+  } catch (error) {
+    console.error(`[call-grace] failed to stop recordings ${callId}:`, error);
   }
 
   try {

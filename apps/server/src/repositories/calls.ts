@@ -49,6 +49,10 @@ export async function getActiveCallForConversation(
   return call ?? null;
 }
 
+export async function listActiveCalls(): Promise<CallRecord[]> {
+  return db.select().from(calls).where(eq(calls.status, "active"));
+}
+
 export async function getCallById(callId: string): Promise<CallRecord | null> {
   const [call] = await db
     .select()

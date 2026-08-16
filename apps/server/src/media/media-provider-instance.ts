@@ -1,4 +1,5 @@
 import { getPreferredLanAddress } from "../dev/network.js";
+import { loadObjectStoreConfig } from "../storage/config.js";
 import { LiveKitMediaSessionProvider } from "./livekit-provider.js";
 import type { MediaSessionProvider } from "./types.js";
 
@@ -33,6 +34,7 @@ function createMediaSessionProvider(): MediaSessionProvider {
     webhookSecret:
       process.env.LIVEKIT_WEBHOOK_SECRET ??
       requireEnv("LIVEKIT_API_SECRET"),
+    objectStore: loadObjectStoreConfig(),
   });
 }
 

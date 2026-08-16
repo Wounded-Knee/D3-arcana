@@ -8,6 +8,7 @@ export function registerGracefulShutdown(options: {
   server: Server;
   pool: Pool;
   stopOutboxWorker: () => void;
+  stopRecordingReconcile?: () => void;
   exit?: (code: number) => never;
 }): void {
   const exit = options.exit ?? process.exit.bind(process);
@@ -22,6 +23,7 @@ export function registerGracefulShutdown(options: {
     console.log(`[shutdown] received ${signal}`);
 
     options.stopOutboxWorker();
+    options.stopRecordingReconcile?.();
 
     const forceExitTimer = setTimeout(() => {
       console.error("[shutdown] timed out; forcing exit");

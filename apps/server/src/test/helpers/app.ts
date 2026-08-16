@@ -11,6 +11,14 @@ async function configureTestMediaEnv(): Promise<void> {
   process.env.LIVEKIT_API_SECRET ??= "devsecret";
   process.env.LIVEKIT_WEBHOOK_SECRET ??= "devsecret";
   process.env.CALL_EMPTY_GRACE_MS ??= "45000";
+  process.env.OBJECT_STORE_ENDPOINT ??= "http://127.0.0.1:9000";
+  process.env.OBJECT_STORE_BUCKET ??= "arcana-recordings";
+  process.env.OBJECT_STORE_ACCESS_KEY ??= "minio";
+  process.env.OBJECT_STORE_SECRET_KEY ??= "minio12345";
+  process.env.OBJECT_STORE_REGION ??= "us-east-1";
+  process.env.OBJECT_STORE_FORCE_PATH_STYLE ??= "true";
+  process.env.EGRESS_INGEST_SECRET ??= "test-egress-secret";
+  process.env.EGRESS_INGEST_URL ??= "ws://127.0.0.1:3000/internal/egress";
 
   const { MockMediaSessionProvider } = await import(
     "../../media/mock-media-provider.js"
@@ -18,8 +26,12 @@ async function configureTestMediaEnv(): Promise<void> {
   const { setMediaSessionProviderForTests } = await import(
     "../../media/media-provider-instance.js"
   );
+  const { createTestObjectStore } = await import(
+    "../../storage/object-store-instance.js"
+  );
 
   setMediaSessionProviderForTests(new MockMediaSessionProvider());
+  createTestObjectStore();
 }
 
 export async function createTestApp(): Promise<Express> {
@@ -30,9 +42,13 @@ export async function createTestApp(): Promise<Express> {
   const { registerApiRoutes } = await import("../../api/routes.js");
   const { registerCallRoutes } = await import("../../api/call-routes.js");
   const { registerHealthRoutes } = await import("../../api/health-routes.js");
+  const { registerLiveKitWebhookRoute } = await import(
+    "../../webhooks/livekit-webhooks.js"
+  );
   const { errorHandler } = await import("../../api/errors.js");
 
   const app = express();
+  registerLiveKitWebhookRoute(app);
   app.use(express.json());
   registerApiRoutes(app);
   registerCallRoutes(app);
@@ -76,17 +92,21 @@ export async function createTestServer(
   const { registerApiRoutes } = await import("../../api/routes.js");
   const { registerCallRoutes } = await import("../../api/call-routes.js");
   const { registerHealthRoutes } = await import("../../api/health-routes.js");
+  const { registerLiveKitWebhookRoute } = await import(
+    "../../webhooks/livekit-webhooks.js"
+  );
   const { errorHandler } = await import("../../api/errors.js");
   const { WebSocketManager } = await import(
     "../../realtime/websocket-manager.js"
   );
-  const { createWebSocketServer } = await import(
-    "../../realtime/websocket-server.js"
+  const { attachWebSocketServers } = await import(
+    "../../realtime/attach-websockets.js"
   );
   const { registerConsumers } = await import("../../consumers/index.js");
 
   const manager = new WebSocketManager();
   const app = express();
+  registerLiveKitWebhookRoute(app);
   app.use(express.json());
   registerApiRoutes(app);
   registerCallRoutes(app, manager);
@@ -95,7 +115,7 @@ export async function createTestServer(
 
   const server = createServer(app);
   registerConsumers(manager);
-  createWebSocketServer(server, manager);
+  attachWebSocketServers(server, manager);
 
   await new Promise<void>((resolve) => {
     server.listen(0, resolve);

@@ -8,7 +8,7 @@ import {
   ForbiddenError,
   NotFoundError,
 } from "./errors.js";
-import { conversationIdParamSchema } from "./schemas/http.js";
+import { conversationCallParamsSchema, conversationIdParamSchema } from "./schemas/http.js";
 import { requireAuth } from "../auth/require-auth.js";
 import {
   cancelEmptyRoomGrace,
@@ -24,10 +24,21 @@ import {
   createCall,
   getActiveCallForConversation,
   getActiveCallWithParticipants,
+  getCallById,
   isActiveCallParticipant,
   markParticipantLeft,
   upsertParticipantJoined,
 } from "../repositories/calls.js";
+import {
+  getCallForConversation,
+  listCallsForConversation,
+  listRecordingsForCall,
+} from "../repositories/recordings.js";
+import { listFragmentsForCall } from "../repositories/recording-fragments.js";
+import {
+  PLAYBACK_URL_TTL_SECONDS,
+} from "../storage/types.js";
+import { getObjectStore } from "../storage/object-store-instance.js";
 import {
   getCallTimelineTracks,
   upsertWaveformSamples,
@@ -310,6 +321,7 @@ export function registerCallRoutes(
         call: {
           id: call.id,
           startedAt: call.startedAt.toISOString(),
+          endedAt: call.endedAt?.toISOString() ?? null,
         },
         tracks: tracks.map((track) => ({
           userId: track.userId,
@@ -328,5 +340,245 @@ export function registerCallRoutes(
     }),
   );
 
+  router.get(
+    "/conversations/:conversationId/calls",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId } = parseParams(
+        conversationIdParamSchema,
+        req.params,
+      );
+      const userId = req.user!.userId;
+
+      const conversation = await getConversationById(conversationId);
+      if (!conversation) {
+        throw new NotFoundError("Conversation not found");
+      }
+
+      const isMember = await isConversationMember(conversationId, userId);
+      if (!isMember) {
+        throw new ForbiddenError("Not a member of this conversation");
+      }
+
+      const calls = await listCallsForConversation(conversationId);
+      const recordingsByCall = await Promise.all(
+        calls.map(async (call) => ({
+          call,
+          recordings: await listRecordingsForCall(call.id),
+        })),
+      );
+
+      res.json({
+        calls: recordingsByCall.map(({ call, recordings }) => ({
+          id: call.id,
+          conversationId: call.conversationId,
+          startedBy: call.startedBy,
+          status: call.status,
+          mediaMode: call.mediaMode,
+          startedAt: call.startedAt.toISOString(),
+          endedAt: call.endedAt?.toISOString() ?? null,
+          recordings: summarizeRecordings(recordings),
+        })),
+      });
+    }),
+  );
+
+  router.get(
+    "/conversations/:conversationId/calls/:callId",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId, callId } = parseParams(
+        conversationCallParamsSchema,
+        req.params,
+      );
+      const userId = req.user!.userId;
+
+      const conversation = await getConversationById(conversationId);
+      if (!conversation) {
+        throw new NotFoundError("Conversation not found");
+      }
+
+      const isMember = await isConversationMember(conversationId, userId);
+      if (!isMember) {
+        throw new ForbiddenError("Not a member of this conversation");
+      }
+
+      const call = await getCallForConversation(conversationId, callId);
+      if (!call) {
+        throw new NotFoundError("Call not found");
+      }
+
+      res.json({
+        call: {
+          id: call.id,
+          conversationId: call.conversationId,
+          startedBy: call.startedBy,
+          status: call.status,
+          mediaMode: call.mediaMode,
+          startedAt: call.startedAt.toISOString(),
+          endedAt: call.endedAt?.toISOString() ?? null,
+        },
+      });
+    }),
+  );
+
+  router.get(
+    "/conversations/:conversationId/calls/:callId/timeline",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId, callId } = parseParams(
+        conversationCallParamsSchema,
+        req.params,
+      );
+      const userId = req.user!.userId;
+
+      const conversation = await getConversationById(conversationId);
+      if (!conversation) {
+        throw new NotFoundError("Conversation not found");
+      }
+
+      const isMember = await isConversationMember(conversationId, userId);
+      if (!isMember) {
+        throw new ForbiddenError("Not a member of this conversation");
+      }
+
+      const call = await getCallById(callId);
+      if (!call || call.conversationId !== conversationId) {
+        throw new NotFoundError("Call not found");
+      }
+
+      const tracks = await getCallTimelineTracks(call.id);
+
+      res.json({
+        call: {
+          id: call.id,
+          startedAt: call.startedAt.toISOString(),
+          endedAt: call.endedAt?.toISOString() ?? null,
+        },
+        tracks: tracks.map((track) => ({
+          userId: track.userId,
+          displayName: track.displayName,
+          sessions: track.sessions.map((session) => ({
+            joinedAt: session.joinedAt.toISOString(),
+            leftAt: session.leftAt?.toISOString() ?? null,
+          })),
+          chunks: track.chunks.map((chunk) => ({
+            startOffsetMs: chunk.startOffsetMs,
+            sampleRateHz: chunk.sampleRateHz,
+            amplitudes: chunk.amplitudes,
+          })),
+        })),
+      });
+    }),
+  );
+
+  router.get(
+    "/conversations/:conversationId/calls/:callId/recordings",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId, callId } = parseParams(
+        conversationCallParamsSchema,
+        req.params,
+      );
+      const userId = req.user!.userId;
+
+      const conversation = await getConversationById(conversationId);
+      if (!conversation) {
+        throw new NotFoundError("Conversation not found");
+      }
+
+      const isMember = await isConversationMember(conversationId, userId);
+      if (!isMember) {
+        throw new ForbiddenError("Not a member of this conversation");
+      }
+
+      const call = await getCallForConversation(conversationId, callId);
+      if (!call) {
+        throw new NotFoundError("Call not found");
+      }
+
+      const [sessions, fragments] = await Promise.all([
+        listRecordingsForCall(callId),
+        listFragmentsForCall(callId),
+      ]);
+      const store = getObjectStore();
+
+      res.json({
+        call: {
+          id: call.id,
+          startedAt: call.startedAt.toISOString(),
+          endedAt: call.endedAt?.toISOString() ?? null,
+        },
+        sessions: sessions.map((session) => ({
+          id: session.id,
+          callId: session.callId,
+          userId: session.userId,
+          status: session.status,
+          callOffsetMs: session.callOffsetMs,
+          durationMs: session.durationMs,
+          objectKey: session.objectKey,
+          error: session.error,
+          startedAt: session.startedAt.toISOString(),
+          endedAt: session.endedAt?.toISOString() ?? null,
+        })),
+        recordings: await Promise.all(
+          fragments.map(async (fragment) => ({
+            id: fragment.id,
+            callId: fragment.callId,
+            userId: fragment.userId,
+            status: "ready",
+            callOffsetMs: fragment.callOffsetMs,
+            durationMs: fragment.durationMs,
+            objectKey: fragment.objectKey,
+            contentType: "audio/wav",
+            format: "wav",
+            error: null,
+            startedAt: call.startedAt.toISOString(),
+            endedAt: null,
+            playbackUrl: await store.issueReadUrl(
+              fragment.objectKey,
+              PLAYBACK_URL_TTL_SECONDS,
+            ),
+          })),
+        ),
+      });
+    }),
+  );
+
   app.use("/api/v1", router);
+}
+
+function summarizeRecordings(
+  recordings: Awaited<ReturnType<typeof listRecordingsForCall>>,
+) {
+  const byUser = new Map<
+    string,
+    { userId: string; statuses: string[]; segmentCount: number }
+  >();
+
+  for (const recording of recordings) {
+    const current = byUser.get(recording.userId) ?? {
+      userId: recording.userId,
+      statuses: [],
+      segmentCount: 0,
+    };
+    current.statuses.push(recording.status);
+    current.segmentCount += 1;
+    byUser.set(recording.userId, current);
+  }
+
+  return [...byUser.values()].map((entry) => ({
+    userId: entry.userId,
+    status: recordingSummaryStatus(entry.statuses),
+    segmentCount: entry.segmentCount,
+  }));
+}
+
+function recordingSummaryStatus(statuses: string[]): string {
+  if (statuses.includes("failed") && !statuses.includes("recording") && !statuses.includes("starting") && !statuses.some((status) => status === "ready" && statuses.indexOf("ready") > statuses.lastIndexOf("failed"))) {
+    const last = statuses[statuses.length - 1];
+    return last ?? "failed";
+  }
+
+  return statuses[statuses.length - 1] ?? "starting";
 }

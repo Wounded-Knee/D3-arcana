@@ -33,4 +33,20 @@ export function registerConsumers(
     callHandlers.handleCallParticipantLeft,
   );
   eventBus.subscribe("call.ended", callHandlers.handleCallEnded);
+  eventBus.subscribe(
+    "call.recording.started",
+    callHandlers.handleCallRecordingStarted,
+  );
+  eventBus.subscribe(
+    "call.recording.completed",
+    callHandlers.handleCallRecordingCompleted,
+  );
+  eventBus.subscribe(
+    "call.recording.failed",
+    callHandlers.handleCallRecordingFailed,
+  );
+  eventBus.subscribe(
+    "call.recording.restored",
+    callHandlers.handleCallRecordingRestored,
+  );
 }

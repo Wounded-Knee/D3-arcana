@@ -3,12 +3,22 @@ import type {
   IssuedJoinCredentials,
   MediaHealth,
   MediaSessionProvider,
+  PublishedAudioTrack,
+  StartedTrackRecording,
+  StartTrackRecordingParams,
 } from "./types.js";
 
 export class MockMediaSessionProvider implements MediaSessionProvider {
   readonly ensureRoomCalls: string[] = [];
   readonly endRoomCalls: string[] = [];
+  readonly startTrackRecordingCalls: StartTrackRecordingParams[] = [];
+  readonly stopTrackRecordingCalls: string[] = [];
+  readonly stopRecordingsForCallCalls: string[] = [];
   healthResult: MediaHealth = { ok: true };
+  startTrackRecordingError: Error | null = null;
+  publishedTracks: PublishedAudioTrack[] = [];
+  webhookEvent: unknown = { event: "test" };
+  nextEgressId = 1;
 
   async ensureRoom(callId: string): Promise<void> {
     this.ensureRoomCalls.push(callId);
@@ -29,8 +39,39 @@ export class MockMediaSessionProvider implements MediaSessionProvider {
     };
   }
 
-  verifyWebhook(_body: Buffer, _authorization: string | undefined): unknown {
-    return { event: "test" };
+  async startTrackRecording(
+    params: StartTrackRecordingParams,
+  ): Promise<StartedTrackRecording> {
+    this.startTrackRecordingCalls.push(params);
+
+    if (this.startTrackRecordingError) {
+      throw this.startTrackRecordingError;
+    }
+
+    const egressId = `EG_${this.nextEgressId}`;
+    this.nextEgressId += 1;
+    return { egressId };
+  }
+
+  async stopTrackRecording(egressId: string): Promise<void> {
+    this.stopTrackRecordingCalls.push(egressId);
+  }
+
+  async stopRecordingsForCall(callId: string): Promise<void> {
+    this.stopRecordingsForCallCalls.push(callId);
+  }
+
+  async listPublishedAudioTracks(
+    _callId: string,
+  ): Promise<PublishedAudioTrack[]> {
+    return this.publishedTracks;
+  }
+
+  async verifyWebhook(
+    _body: Buffer,
+    _authorization: string | undefined,
+  ): Promise<unknown> {
+    return this.webhookEvent;
   }
 
   async checkHealth(): Promise<MediaHealth> {

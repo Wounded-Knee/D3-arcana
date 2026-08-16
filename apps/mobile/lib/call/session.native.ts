@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import {
   ConnectionState,
   Room,
@@ -21,6 +22,7 @@ function livekitNative(): typeof import('@livekit/react-native') {
 export class NativeCallSession implements CallSession {
   private room: Room | null = null;
   private muted = false;
+  private remoteMuted = false;
   private audioSessionStarted = false;
   private listeners = new Set<CallSessionListener>();
   private stopAudioLevelLoop: (() => void) | null = null;
@@ -28,7 +30,15 @@ export class NativeCallSession implements CallSession {
   async connect(url: string, token: string): Promise<void> {
     await this.disconnect();
 
-    await livekitNative().AudioSession.startAudioSession();
+    const { AudioSession, AndroidAudioTypePresets } = livekitNative();
+    await AudioSession.configureAudio({
+      android: {
+        preferredOutputList: ['bluetooth', 'headset', 'earpiece', 'speaker'],
+        audioTypeOptions: AndroidAudioTypePresets.communication,
+      },
+      ios: { defaultOutput: 'earpiece' },
+    });
+    await AudioSession.startAudioSession();
     this.audioSessionStarted = true;
 
     try {
@@ -38,6 +48,7 @@ export class NativeCallSession implements CallSession {
       });
 
       room.on(RoomEvent.ParticipantConnected, () => {
+        this.applyRemoteMute();
         this.notifyParticipants();
       });
       room.on(RoomEvent.ParticipantDisconnected, () => {
@@ -56,6 +67,7 @@ export class NativeCallSession implements CallSession {
       await room.connect(url, token);
       await room.localParticipant.setMicrophoneEnabled(true);
       this.muted = false;
+      this.remoteMuted = false;
       this.room = room;
       this.startAudioLevels();
       this.notifyConnection(true);
@@ -72,6 +84,7 @@ export class NativeCallSession implements CallSession {
     const room = this.room;
     this.room = null;
     this.muted = false;
+    this.remoteMuted = false;
 
     if (room) {
       await room.disconnect();
@@ -93,6 +106,27 @@ export class NativeCallSession implements CallSession {
     await this.room.localParticipant.setMicrophoneEnabled(!muted);
     this.muted = muted;
     this.notifyParticipants();
+  }
+
+  async setSpeakerphone(enabled: boolean): Promise<void> {
+    if (!this.audioSessionStarted) {
+      return;
+    }
+
+    const output =
+      Platform.OS === 'ios'
+        ? enabled
+          ? 'force_speaker'
+          : 'default'
+        : enabled
+          ? 'speaker'
+          : 'earpiece';
+    await livekitNative().AudioSession.selectAudioOutput(output);
+  }
+
+  setRemoteAudioMuted(muted: boolean): void {
+    this.remoteMuted = muted;
+    this.applyRemoteMute();
   }
 
   isMuted(): boolean {
@@ -132,6 +166,17 @@ export class NativeCallSession implements CallSession {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  private applyRemoteMute(): void {
+    if (!this.room) {
+      return;
+    }
+
+    const volume = this.remoteMuted ? 0 : 1;
+    for (const participant of this.room.remoteParticipants.values()) {
+      participant.setVolume(volume);
+    }
   }
 
   private startAudioLevels(): void {

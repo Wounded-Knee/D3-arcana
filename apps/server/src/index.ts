@@ -2,7 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { pool } from "./database.js";
 import { createServer } from "node:http";
-import { createWebSocketServer } from "./realtime/websocket-server.js";
+import { attachWebSocketServers } from "./realtime/attach-websockets.js";
 import { WebSocketManager } from "./realtime/websocket-manager.js";
 
 import { eventBus } from "./events/event-bus-instance.js";
@@ -20,6 +20,8 @@ import { registerDevCors } from "./dev/cors.js";
 import { registerDevRequestLogger } from "./dev/request-logger.js";
 import { registerGracefulShutdown } from "./dev/shutdown.js";
 import { registerLiveKitWebhookRoute } from "./webhooks/livekit-webhooks.js";
+import { startRecordingReconcileLoop } from "./calls/recording-lifecycle.js";
+import { getObjectStore } from "./storage/object-store-instance.js";
 
 const app = express();
 const port = Number(process.env.PORT) || 3000;
@@ -44,16 +46,24 @@ app.use(errorHandler);
 
 const server = createServer(app);
 registerConsumers(webSocketManager);
-createWebSocketServer(server, webSocketManager);
+attachWebSocketServers(server, webSocketManager);
 
 server.listen(port, "0.0.0.0", () => {
   logDevelopmentEndpoints(port);
 });
 
 const stopOutboxWorker = startOutboxWorker();
+const stopRecordingReconcile = startRecordingReconcileLoop();
+
+void getObjectStore()
+  .ensureReady()
+  .catch((error: unknown) => {
+    console.error("[storage] failed to ensure object store:", error);
+  });
 
 registerGracefulShutdown({
   server,
   pool,
   stopOutboxWorker,
+  stopRecordingReconcile,
 });

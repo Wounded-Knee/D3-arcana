@@ -29,7 +29,9 @@ import { resolveCallMediaUrl } from '@/lib/config';
 import { isExpoGo } from '@/lib/expo-go';
 import {
   fetchActiveCall,
+  fetchCallRecordings,
   fetchCallTimeline,
+  fetchCalls,
   fetchConversation,
   fetchMessages,
   joinCall,
@@ -37,8 +39,39 @@ import {
   postWaveform,
   sendMessage,
   type ActiveCallParticipant,
+  type CallRecordingItem,
+  type CallRecordingSession,
   type Message,
 } from '@/lib/api';
+
+function recordingNoticeFromItems(
+  items: CallRecordingSession[],
+  names: Map<string, string>,
+): string | null {
+  const interrupted = items.filter((item) => {
+    if (item.status !== 'failed') {
+      return false;
+    }
+
+    return !items.some(
+      (other) =>
+        other.userId === item.userId &&
+        (other.status === 'recording' ||
+          other.status === 'ready' ||
+          other.status === 'starting') &&
+        Date.parse(other.startedAt) > Date.parse(item.startedAt),
+    );
+  });
+
+  if (interrupted.length === 0) {
+    return null;
+  }
+
+  const who = interrupted
+    .map((item) => names.get(item.userId) ?? 'A participant')
+    .join(', ');
+  return `Recording interrupted for ${who}`;
+}
 
 function resolveSenderName(
   message: Message,
@@ -76,8 +109,16 @@ export default function ConversationScreen() {
   const [inCall, setInCall] = useState(false);
   const [isJoiningCall, setIsJoiningCall] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
+  const [isSpeakerOn, setIsSpeakerOn] = useState(false);
   const [callStartedAt, setCallStartedAt] = useState<string | null>(null);
+  const [callEndedAt, setCallEndedAt] = useState<string | null>(null);
   const [timelineTracks, setTimelineTracks] = useState<TimelineTrack[]>([]);
+  const [recordings, setRecordings] = useState<CallRecordingItem[]>([]);
+  const [recordingSessions, setRecordingSessions] = useState<
+    CallRecordingSession[]
+  >([]);
+  const [recordingNotice, setRecordingNotice] = useState<string | null>(null);
+  const [safeJoinLiveAtMs, setSafeJoinLiveAtMs] = useState<number | null>(null);
   const callSessionRef = useRef<CallSession | null>(null);
 
   const conversationId = id ?? '';
@@ -102,31 +143,53 @@ export default function ConversationScreen() {
     setError(null);
 
     try {
-      const [items, conversation, activeCall, timeline] = await Promise.all([
+      const [items, conversation, activeCall, calls] = await Promise.all([
         fetchMessages(token, conversationId),
         fetchConversation(token, conversationId),
         fetchActiveCall(token, conversationId),
-        fetchCallTimeline(token, conversationId),
+        fetchCalls(token, conversationId).catch(() => []),
       ]);
       setMessages(items);
-      setMemberNames(
-        new Map(conversation.members.map((member) => [member.id, member.displayName])),
+      const names = new Map(
+        conversation.members.map((member) => [member.id, member.displayName]),
       );
+      setMemberNames(names);
 
-      if (activeCall) {
-        setCallId(activeCall.call.id);
-        setCallParticipants(activeCall.participants);
-        setCallStartedAt(activeCall.call.startedAt);
+      const latest = activeCall?.call ?? calls[0] ?? null;
+
+      if (latest) {
+        setCallId(latest.id);
+        setCallStartedAt(latest.startedAt);
+        setCallEndedAt(
+          'endedAt' in latest ? (latest.endedAt as string | null) : null,
+        );
+        setCallParticipants(activeCall?.participants ?? []);
+        const [timeline, callRecordings] = await Promise.all([
+          fetchCallTimeline(token, conversationId, latest.id),
+          fetchCallRecordings(token, conversationId, latest.id).catch(() => ({
+            recordings: [],
+            sessions: [],
+          })),
+        ]);
+        if (timeline) {
+          setCallStartedAt(timeline.call.startedAt);
+          setCallEndedAt(timeline.call.endedAt);
+          setTimelineTracks(timeline.tracks);
+        }
+        setRecordings(callRecordings.recordings);
+        setRecordingSessions(callRecordings.sessions);
+        setRecordingNotice(
+          recordingNoticeFromItems(callRecordings.sessions, names),
+        );
       } else {
         setCallId(null);
         setCallParticipants([]);
         setCallStartedAt(null);
+        setCallEndedAt(null);
         setTimelineTracks([]);
-      }
-
-      if (timeline) {
-        setCallStartedAt(timeline.call.startedAt);
-        setTimelineTracks(timeline.tracks);
+        setRecordings([]);
+        setRecordingSessions([]);
+        setRecordingNotice(null);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load messages');
@@ -138,6 +201,18 @@ export default function ConversationScreen() {
   useEffect(() => {
     void loadMessages();
   }, [loadMessages]);
+
+  useEffect(() => {
+    if (!recordingNotice?.startsWith('Recording restored')) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setRecordingNotice(null);
+    }, 4000);
+
+    return () => clearTimeout(timer);
+  }, [recordingNotice]);
 
   useEffect(() => {
     if (!realtime || !conversationId) {
@@ -175,6 +250,9 @@ export default function ConversationScreen() {
 
         case 'call.started':
           setCallId(event.payload.callId);
+          setCallEndedAt(null);
+          setRecordings([]);
+          setRecordingSessions([]);
           if (token) {
             void fetchCallTimeline(token, conversationId).then((timeline) => {
               if (!timeline) {
@@ -235,13 +313,65 @@ export default function ConversationScreen() {
           break;
 
         case 'call.ended':
-          setCallId(null);
           setCallParticipants([]);
-          setCallStartedAt(null);
-          setTimelineTracks([]);
           setInCall(false);
+          setIsSpeakerOn(false);
           void callSessionRef.current?.disconnect();
           callSessionRef.current = null;
+          if (token && conversationId && event.payload.callId) {
+            setCallId(event.payload.callId);
+            void fetchCallTimeline(
+              token,
+              conversationId,
+              event.payload.callId,
+            ).then((timeline) => {
+              if (!timeline) {
+                return;
+              }
+              setCallStartedAt(timeline.call.startedAt);
+              setCallEndedAt(timeline.call.endedAt);
+              setTimelineTracks(timeline.tracks);
+            });
+            void fetchCallRecordings(
+              token,
+              conversationId,
+              event.payload.callId,
+            ).then((body) => {
+              setRecordings(body.recordings);
+              setRecordingSessions(body.sessions);
+              setRecordingNotice(
+                recordingNoticeFromItems(body.sessions, memberNames),
+              );
+            });
+          }
+          break;
+
+        case 'call.recording.failed':
+          setRecordingNotice(
+            `Recording interrupted for ${memberNames.get(event.payload.userId) ?? 'a participant'}`,
+          );
+          break;
+
+        case 'call.recording.restored':
+          setRecordingNotice(
+            `Recording restored for ${memberNames.get(event.payload.userId) ?? 'a participant'}`,
+          );
+          break;
+
+        case 'call.recording.completed':
+          if (token && conversationId && event.payload.callId) {
+            void fetchCallRecordings(
+              token,
+              conversationId,
+              event.payload.callId,
+            ).then((body) => {
+              setRecordings(body.recordings);
+              setRecordingSessions(body.sessions);
+              setRecordingNotice(
+                recordingNoticeFromItems(body.sessions, memberNames),
+              );
+            });
+          }
           break;
 
         default:
@@ -271,6 +401,78 @@ export default function ConversationScreen() {
       );
     });
   }, [conversationId, memberNames, realtime]);
+
+  useEffect(() => {
+    if (!realtime || !conversationId) {
+      return;
+    }
+
+    const stopFragment = realtime.onRecordingFragment((fragment) => {
+      if (fragment.conversationId !== conversationId) {
+        return;
+      }
+
+      setRecordings((current) => {
+        if (current.some((item) => item.id === fragment.fragmentId)) {
+          return current;
+        }
+
+        return [
+          ...current,
+          {
+            id: fragment.fragmentId,
+            callId: fragment.callId,
+            userId: fragment.userId,
+            status: 'ready',
+            callOffsetMs: fragment.callOffsetMs,
+            durationMs: fragment.durationMs,
+            objectKey: '',
+            contentType: 'audio/wav',
+            format: 'wav',
+            error: null,
+            startedAt: new Date().toISOString(),
+            endedAt: null,
+            playbackUrl: fragment.playbackUrl,
+          },
+        ];
+      });
+    });
+
+    const stopCatchup = realtime.onCatchupSafeToJoinLive((message) => {
+      if (message.conversationId !== conversationId) {
+        return;
+      }
+
+      if (callId && message.callId !== callId) {
+        return;
+      }
+
+      setSafeJoinLiveAtMs(message.atCallOffsetMs);
+    });
+
+    return () => {
+      stopFragment();
+      stopCatchup();
+    };
+  }, [callId, conversationId, realtime]);
+
+  useEffect(() => {
+    if (!token || !conversationId || !callId || callEndedAt) {
+      return;
+    }
+
+    const timer = setInterval(() => {
+      void fetchCallRecordings(token, conversationId, callId).then((body) => {
+        setRecordings(body.recordings);
+        setRecordingSessions(body.sessions);
+        setRecordingNotice(
+          recordingNoticeFromItems(body.sessions, memberNames),
+        );
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [callEndedAt, callId, conversationId, memberNames, token]);
 
   useEffect(() => {
     if (!inCall || !callStartedAt || !token || !conversationId || !user) {
@@ -341,6 +543,7 @@ export default function ConversationScreen() {
     try {
       const credentials = await joinCall(token, conversationId);
       setCallId(credentials.callId);
+      setCallEndedAt(null);
 
       const timeline = await fetchCallTimeline(token, conversationId);
       if (timeline) {
@@ -373,11 +576,13 @@ export default function ConversationScreen() {
       await session.connect(resolveCallMediaUrl(credentials.url), credentials.token);
       setInCall(true);
       setIsMuted(false);
+      setIsSpeakerOn(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to join call');
       await callSessionRef.current?.disconnect();
       callSessionRef.current = null;
       setInCall(false);
+      setIsSpeakerOn(false);
     } finally {
       setIsJoiningCall(false);
     }
@@ -397,6 +602,7 @@ export default function ConversationScreen() {
       callSessionRef.current = null;
       setInCall(false);
       setIsMuted(false);
+      setIsSpeakerOn(false);
     }
   }
 
@@ -409,6 +615,17 @@ export default function ConversationScreen() {
     const nextMuted = !isMuted;
     await session.setMuted(nextMuted);
     setIsMuted(nextMuted);
+  }
+
+  async function handleToggleSpeaker() {
+    const session = callSessionRef.current;
+    if (!session) {
+      return;
+    }
+
+    const next = !isSpeakerOn;
+    await session.setSpeakerphone(next);
+    setIsSpeakerOn(next);
   }
 
   async function handleSend() {
@@ -445,15 +662,18 @@ export default function ConversationScreen() {
   }
 
   const composerPaddingBottom = Math.max(insets.bottom, 12);
+  const callIsLive = callId !== null && callEndedAt === null;
   const showCallBar = inCall || callId !== null;
   const callControls = (
     <View style={styles.callHeader}>
       <View>
         <Text style={styles.callTitle}>
-          {inCall ? 'In call' : 'Call active'}
+          {inCall ? 'In call' : callIsLive ? 'Call active' : 'Call recording'}
         </Text>
         <Text style={styles.callMeta}>
-          {participantCount} participant{participantCount === 1 ? '' : 's'}
+          {callIsLive
+            ? `${participantCount} participant${participantCount === 1 ? '' : 's'}`
+            : 'Scrub the timeline to play'}
         </Text>
       </View>
       <View style={styles.callActions}>
@@ -464,6 +684,15 @@ export default function ConversationScreen() {
                 {isMuted ? 'Unmute' : 'Mute'}
               </Text>
             </Pressable>
+            {Platform.OS === 'android' ? (
+              <Pressable
+                style={[styles.callButton, isSpeakerOn && styles.speakerActive]}
+                onPress={() => void handleToggleSpeaker()}>
+                <Text style={styles.callButtonText}>
+                  {isSpeakerOn ? 'Earpiece' : 'Speaker'}
+                </Text>
+              </Pressable>
+            ) : null}
             <Pressable
               style={[styles.callButton, styles.leaveButton]}
               onPress={() => void handleLeaveCall()}>
@@ -476,7 +705,13 @@ export default function ConversationScreen() {
             disabled={isJoiningCall}
             onPress={() => void handleJoinCall()}>
             <Text style={styles.callButtonText}>
-              {isJoiningCall ? 'Joining…' : 'Join call'}
+              {isJoiningCall
+                ? callIsLive
+                  ? 'Joining…'
+                  : 'Starting…'
+                : callIsLive
+                  ? 'Join call'
+                  : 'Start call'}
             </Text>
           </Pressable>
         )}
@@ -493,8 +728,23 @@ export default function ConversationScreen() {
         callStartedAt ? (
           <CallTimeline
             startedAt={callStartedAt}
+            endedAt={callEndedAt}
             tracks={timelineTracks}
+            recordings={recordings.map((recording) => ({
+              id: recording.id,
+              userId: recording.userId,
+              callOffsetMs: recording.callOffsetMs,
+              durationMs: recording.durationMs ?? 0,
+              playbackUrl: recording.playbackUrl,
+              status: recording.status,
+            }))}
+            live={callIsLive}
             header={callControls}
+            onReplayActiveChange={(active) => {
+              callSessionRef.current?.setRemoteAudioMuted(active);
+            }}
+            safeJoinLiveAtMs={safeJoinLiveAtMs}
+            onSafeJoinConsumed={() => setSafeJoinLiveAtMs(null)}
           />
         ) : (
           <View style={styles.callBar}>{callControls}</View>
@@ -511,6 +761,10 @@ export default function ConversationScreen() {
           </Pressable>
         </View>
       )}
+
+      {recordingNotice ? (
+        <Text style={styles.recordingNotice}>{recordingNotice}</Text>
+      ) : null}
 
       {isLoading ? (
         <ActivityIndicator style={styles.centered} />
@@ -622,6 +876,9 @@ const styles = StyleSheet.create({
   leaveButton: {
     backgroundColor: '#dc2626',
   },
+  speakerActive: {
+    backgroundColor: '#0f766e',
+  },
   callButtonText: {
     color: '#ffffff',
     fontWeight: '600',
@@ -698,5 +955,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: 16,
     paddingBottom: 8,
+  },
+  recordingNotice: {
+    color: '#facc15',
+    textAlign: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    backgroundColor: '#422006',
   },
 });

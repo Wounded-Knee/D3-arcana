@@ -25,15 +25,44 @@ vi.mock("livekit-server-sdk", () => {
     receive = vi.fn().mockReturnValue({ event: "participant_joined" });
   }
 
-  return { AccessToken, RoomServiceClient, WebhookReceiver };
+  class EgressClient {
+    startTrackEgress = vi.fn().mockResolvedValue({ egressId: "EG_mock" });
+    stopEgress = vi.fn().mockResolvedValue({});
+    listEgress = vi.fn().mockResolvedValue([]);
+  }
+
+  const TrackType = { AUDIO: 0, VIDEO: 1, DATA: 2 };
+  const TrackSource = { UNKNOWN: 0, CAMERA: 1, MICROPHONE: 2 };
+
+  return {
+    AccessToken,
+    RoomServiceClient,
+    WebhookReceiver,
+    EgressClient,
+    TrackType,
+    TrackSource,
+  };
 });
 
 import {
+  isLiveKitMissing,
   LiveKitMediaSessionProvider,
   parseCallIdFromRoomName,
   roomNameForCall,
   toWsUrl,
 } from "./livekit-provider.js";
+
+function testObjectStore() {
+  return {
+    endpoint: "http://127.0.0.1:9000",
+    publicEndpoint: "http://127.0.0.1:9000",
+    bucket: "arcana-recordings",
+    accessKey: "minio",
+    secretKey: "minio12345",
+    region: "us-east-1",
+    forcePathStyle: true,
+  };
+}
 
 describe("LiveKitMediaSessionProvider", () => {
   const provider = new LiveKitMediaSessionProvider({
@@ -41,6 +70,21 @@ describe("LiveKitMediaSessionProvider", () => {
     apiKey: "devkey",
     apiSecret: "devsecret",
     webhookSecret: "devsecret",
+    objectStore: testObjectStore(),
+  });
+
+  it("treats LiveKit 404s as a missing room", () => {
+    expect(
+      isLiveKitMissing({
+        status: 404,
+        code: "not_found",
+        message: "twirp error unknown: requested room does not exist",
+      }),
+    ).toBe(true);
+    expect(isLiveKitMissing(new Error("requested room does not exist"))).toBe(
+      true,
+    );
+    expect(isLiveKitMissing(new Error("connection refused"))).toBe(false);
   });
 
   it("converts HTTP URL to WS for clients", () => {
@@ -61,6 +105,7 @@ describe("LiveKitMediaSessionProvider", () => {
       apiKey: "devkey",
       apiSecret: "devsecret",
       webhookSecret: "devsecret",
+      objectStore: testObjectStore(),
     });
 
     const credentials = await lanProvider.issueJoinCredentials({
@@ -101,5 +146,17 @@ describe("LiveKitMediaSessionProvider", () => {
 
   it("reports healthy when listRooms succeeds", async () => {
     await expect(provider.checkHealth()).resolves.toEqual({ ok: true });
+  });
+
+  it("starts a track egress over websocket without mixing", async () => {
+    const result = await provider.startTrackRecording({
+      callId: "00000000-0000-4000-8000-000000000010",
+      userId: "00000000-0000-4000-8000-000000000011",
+      trackSid: "TR_mic",
+      websocketUrl:
+        "ws://127.0.0.1:3000/internal/egress?secret=test&recordingId=r1&callId=c1&trackSid=TR_mic",
+    });
+
+    expect(result.egressId).toBe("EG_mock");
   });
 });

@@ -19,15 +19,17 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1111.0",
+    "@aws-sdk/s3-request-presigner": "^3.1111.0",
     "@d3-arcana/events": "workspace:*",
     "@d3-arcana/protocol": "workspace:*",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",
+    "livekit-server-sdk": "^2.13.0",
     "pg": "^8.23.0",
     "ws": "^8.21.3",
-    "livekit-server-sdk": "^2.13.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

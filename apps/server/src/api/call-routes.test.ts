@@ -227,6 +227,119 @@ describe("call routes", () => {
   });
 });
 
+describe("call recordings http", () => {
+  async function seedMembers() {
+    const alice = await createUser("Alice");
+    const bob = await createUser("Bob");
+    const conversation = await createConversation("Calls", alice.id);
+    await addConversationMember(conversation.id, bob.id);
+
+    const app = await createAuthenticatedTestApp({
+      "test-alice": alice.id,
+      "test-bob": bob.id,
+    });
+
+    return { alice, bob, conversation, app };
+  }
+
+  it("lists calls and returns ended-call timeline by call id", async () => {
+    const { alice, conversation, app } = await seedMembers();
+
+    const joinResponse = await request(app)
+      .post(`/api/v1/conversations/${conversation.id}/calls/join`)
+      .set("Authorization", "Bearer test-alice")
+      .send({})
+      .expect(201);
+
+    const callId = joinResponse.body.callId as string;
+
+    await request(app)
+      .post(`/api/v1/conversations/${conversation.id}/calls/leave`)
+      .set("Authorization", "Bearer test-alice")
+      .send({})
+      .expect(204);
+
+    const { endCall } = await import("../repositories/calls.js");
+    await endCall(callId, alice.id, "empty_room");
+
+    const list = await request(app)
+      .get(`/api/v1/conversations/${conversation.id}/calls`)
+      .set("Authorization", "Bearer test-alice")
+      .expect(200);
+
+    expect(list.body.calls).toHaveLength(1);
+    expect(list.body.calls[0].id).toBe(callId);
+    expect(list.body.calls[0].status).toBe("ended");
+
+    const timeline = await request(app)
+      .get(`/api/v1/conversations/${conversation.id}/calls/${callId}/timeline`)
+      .set("Authorization", "Bearer test-alice")
+      .expect(200);
+
+    expect(timeline.body.call.id).toBe(callId);
+    expect(timeline.body.call.endedAt).toEqual(expect.any(String));
+  });
+
+  it("returns playback URLs for ready recordings", async () => {
+    const { alice, conversation, app } = await seedMembers();
+    const joinResponse = await request(app)
+      .post(`/api/v1/conversations/${conversation.id}/calls/join`)
+      .set("Authorization", "Bearer test-alice")
+      .send({})
+      .expect(201);
+    const callId = joinResponse.body.callId as string;
+
+    const {
+      insertStartingRecording,
+      markRecordingActive,
+    } = await import("../repositories/recordings.js");
+    const { insertRecordingFragment } = await import(
+      "../repositories/recording-fragments.js"
+    );
+
+    const recording = await insertStartingRecording({
+      id: "00000000-0000-4000-8000-000000000401",
+      callId,
+      conversationId: conversation.id,
+      userId: alice.id,
+      callOffsetMs: 0,
+      objectKey: "alice-session",
+      providerTrackSid: "TR_alice",
+    });
+    await markRecordingActive(recording.id, "EG_ready", alice.id, {
+      type: "call.recording.started",
+      payload: {
+        callId,
+        userId: alice.id,
+        recordingId: recording.id,
+        objectKey: "alice-session",
+        callOffsetMs: 0,
+      },
+    });
+    await insertRecordingFragment({
+      recordingId: recording.id,
+      callId,
+      userId: alice.id,
+      callOffsetMs: 0,
+      durationMs: 500,
+      objectKey: "alice-session/0.wav",
+      sizeBytes: 48_044,
+    });
+
+    const response = await request(app)
+      .get(`/api/v1/conversations/${conversation.id}/calls/${callId}/recordings`)
+      .set("Authorization", "Bearer test-alice")
+      .expect(200);
+
+    expect(response.body.sessions[0].status).toBe("recording");
+    expect(response.body.recordings).toHaveLength(1);
+    expect(response.body.recordings[0].status).toBe("ready");
+    expect(response.body.recordings[0].playbackUrl).toContain("alice-session%2F0.wav");
+    expect(response.body.recordings[0].callOffsetMs).toBe(0);
+    expect(response.body.recordings[0].durationMs).toBe(500);
+  });
+});
+
 describe("call waveform websocket", () => {
   let testServer: Awaited<ReturnType<typeof createTestServer>> | undefined;
   let client: WsTestClient | undefined;

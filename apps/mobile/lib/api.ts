@@ -376,6 +376,7 @@ export interface CallTimelineResponse {
   call: {
     id: string;
     startedAt: string;
+    endedAt: string | null;
   };
   tracks: CallTimelineTrack[];
 }
@@ -383,9 +384,13 @@ export interface CallTimelineResponse {
 export async function fetchCallTimeline(
   token: string,
   conversationId: string,
+  callId?: string,
 ): Promise<CallTimelineResponse | null> {
   const apiBaseUrl = getApiBaseUrl();
-  const url = `${apiBaseUrl}/api/v1/conversations/${conversationId}/calls/active/timeline`;
+  const path = callId
+    ? `/api/v1/conversations/${conversationId}/calls/${callId}/timeline`
+    : `/api/v1/conversations/${conversationId}/calls/active/timeline`;
+  const url = `${apiBaseUrl}${path}`;
 
   try {
     const response = await fetchWithTimeout(url, {
@@ -434,5 +439,77 @@ export async function postWaveform(
       method: 'POST',
       body: JSON.stringify({ startOffsetMs, amplitudes }),
     },
+  );
+}
+
+export interface CallListItem {
+  id: string;
+  conversationId: string;
+  startedBy: string;
+  status: string;
+  mediaMode: string;
+  startedAt: string;
+  endedAt: string | null;
+  recordings: Array<{
+    userId: string;
+    status: string;
+    segmentCount: number;
+  }>;
+}
+
+export interface CallRecordingItem {
+  id: string;
+  callId: string;
+  userId: string;
+  status: string;
+  callOffsetMs: number;
+  durationMs: number | null;
+  objectKey: string;
+  contentType: string;
+  format: string;
+  error: string | null;
+  startedAt: string;
+  endedAt: string | null;
+  playbackUrl: string | null;
+}
+
+export async function fetchCalls(
+  token: string,
+  conversationId: string,
+): Promise<CallListItem[]> {
+  const body = await request<{ calls: CallListItem[] }>(
+    token,
+    `/api/v1/conversations/${conversationId}/calls`,
+  );
+  return body.calls;
+}
+
+export interface CallRecordingSession {
+  id: string;
+  callId: string;
+  userId: string;
+  status: string;
+  callOffsetMs: number;
+  durationMs: number | null;
+  objectKey: string;
+  error: string | null;
+  startedAt: string;
+  endedAt: string | null;
+}
+
+export async function fetchCallRecordings(
+  token: string,
+  conversationId: string,
+  callId: string,
+): Promise<{
+  recordings: CallRecordingItem[];
+  sessions: CallRecordingSession[];
+}> {
+  return request<{
+    recordings: CallRecordingItem[];
+    sessions: CallRecordingSession[];
+  }>(
+    token,
+    `/api/v1/conversations/${conversationId}/calls/${callId}/recordings`,
   );
 }

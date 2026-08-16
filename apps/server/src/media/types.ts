@@ -30,12 +30,34 @@ export interface MediaHealth {
   error?: string;
 }
 
+export interface PublishedAudioTrack {
+  userId: string;
+  trackSid: string;
+}
+
+export interface StartTrackRecordingParams {
+  callId: string;
+  userId: string;
+  trackSid: string;
+  websocketUrl: string;
+}
+
+export interface StartedTrackRecording {
+  egressId: string;
+}
+
 export interface MediaSessionProvider {
   ensureRoom(callId: string): Promise<void>;
   endRoom(callId: string): Promise<void>;
   issueJoinCredentials(
     params: IssueJoinCredentialsParams,
   ): Promise<IssuedJoinCredentials>;
+  startTrackRecording(
+    params: StartTrackRecordingParams,
+  ): Promise<StartedTrackRecording>;
+  stopTrackRecording(egressId: string): Promise<void>;
+  stopRecordingsForCall(callId: string): Promise<void>;
+  listPublishedAudioTracks(callId: string): Promise<PublishedAudioTrack[]>;
   verifyWebhook(body: Buffer, authorization: string | undefined): unknown;
   checkHealth(): Promise<MediaHealth>;
 }

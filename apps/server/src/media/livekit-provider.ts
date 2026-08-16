@@ -1,15 +1,22 @@
 import {
   AccessToken,
+  EgressClient,
   RoomServiceClient,
+  TrackSource,
+  TrackType,
   WebhookReceiver,
 } from "livekit-server-sdk";
 
+import type { ObjectStoreConfig } from "../storage/types.js";
 import type {
   IssueJoinCredentialsParams,
   IssuedJoinCredentials,
   JoinRole,
   MediaHealth,
   MediaSessionProvider,
+  PublishedAudioTrack,
+  StartedTrackRecording,
+  StartTrackRecordingParams,
 } from "./types.js";
 
 const TOKEN_TTL_SECONDS = 60 * 60;
@@ -35,16 +42,23 @@ export interface LiveKitMediaSessionProviderConfig {
   apiKey: string;
   apiSecret: string;
   webhookSecret: string;
+  objectStore: ObjectStoreConfig;
 }
 
 export class LiveKitMediaSessionProvider implements MediaSessionProvider {
   private readonly clientWsUrl: string;
   private readonly roomService: RoomServiceClient;
+  private readonly egress: EgressClient;
   private readonly webhookReceiver: WebhookReceiver;
 
   constructor(private readonly config: LiveKitMediaSessionProviderConfig) {
     this.clientWsUrl = toWsUrl(config.publicUrl ?? config.url);
     this.roomService = new RoomServiceClient(
+      config.url,
+      config.apiKey,
+      config.apiSecret,
+    );
+    this.egress = new EgressClient(
       config.url,
       config.apiKey,
       config.apiSecret,
@@ -76,10 +90,7 @@ export class LiveKitMediaSessionProvider implements MediaSessionProvider {
     try {
       await this.roomService.deleteRoom(name);
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : String(error);
-
-      if (!message.toLowerCase().includes("not found")) {
+      if (!isLiveKitMissing(error)) {
         throw error;
       }
     }
@@ -114,7 +125,81 @@ export class LiveKitMediaSessionProvider implements MediaSessionProvider {
     };
   }
 
-  verifyWebhook(body: Buffer, authorization: string | undefined): unknown {
+  async startTrackRecording(
+    params: StartTrackRecordingParams,
+  ): Promise<StartedTrackRecording> {
+    const info = await this.egress.startTrackEgress(
+      roomNameForCall(params.callId),
+      params.websocketUrl,
+      params.trackSid,
+    );
+
+    if (!info.egressId) {
+      throw new Error("LiveKit egress did not return an egress id");
+    }
+
+    return { egressId: info.egressId };
+  }
+
+  async stopTrackRecording(egressId: string): Promise<void> {
+    try {
+      await this.egress.stopEgress(egressId);
+    } catch (error) {
+      if (!isLiveKitMissing(error)) {
+        throw error;
+      }
+    }
+  }
+
+  async stopRecordingsForCall(callId: string): Promise<void> {
+    const active = await this.egress.listEgress({
+      roomName: roomNameForCall(callId),
+      active: true,
+    });
+
+    await Promise.all(
+      active.map((info) =>
+        info.egressId ? this.stopTrackRecording(info.egressId) : Promise.resolve(),
+      ),
+    );
+  }
+
+  async listPublishedAudioTracks(
+    callId: string,
+  ): Promise<PublishedAudioTrack[]> {
+    try {
+      const participants = await this.roomService.listParticipants(
+        roomNameForCall(callId),
+      );
+      const tracks: PublishedAudioTrack[] = [];
+
+      for (const participant of participants) {
+        for (const track of participant.tracks) {
+          if (!isMicrophoneAudioTrack(track.type, track.source)) {
+            continue;
+          }
+
+          tracks.push({
+            userId: participant.identity,
+            trackSid: track.sid,
+          });
+        }
+      }
+
+      return tracks;
+    } catch (error) {
+      if (isLiveKitMissing(error)) {
+        return [];
+      }
+
+      throw error;
+    }
+  }
+
+  async verifyWebhook(
+    body: Buffer,
+    authorization: string | undefined,
+  ): Promise<unknown> {
     return this.webhookReceiver.receive(body.toString(), authorization);
   }
 
@@ -129,6 +214,36 @@ export class LiveKitMediaSessionProvider implements MediaSessionProvider {
       };
     }
   }
+}
+
+export function isMicrophoneAudioTrack(
+  type: unknown,
+  source: unknown,
+): boolean {
+  const typeValue = normalizeEnum(type);
+  const sourceValue = normalizeEnum(source);
+
+  if (typeValue !== TrackType.AUDIO && typeValue !== "AUDIO") {
+    return false;
+  }
+
+  return (
+    sourceValue === TrackSource.MICROPHONE ||
+    sourceValue === "MICROPHONE" ||
+    sourceValue === TrackSource.UNKNOWN ||
+    sourceValue === "UNKNOWN" ||
+    sourceValue === 0 ||
+    sourceValue === undefined ||
+    sourceValue === ""
+  );
+}
+
+function normalizeEnum(value: unknown): unknown {
+  if (value && typeof value === "object" && "value" in value) {
+    return (value as { value: unknown }).value;
+  }
+
+  return value;
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
@@ -148,6 +263,22 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
       },
     );
   });
+}
+
+export function isLiveKitMissing(error: unknown): boolean {
+  if (error && typeof error === "object") {
+    const record = error as { status?: unknown; code?: unknown };
+    if (record.status === 404 || record.code === "not_found") {
+      return true;
+    }
+  }
+
+  const message = (
+    error instanceof Error ? error.message : String(error)
+  ).toLowerCase();
+  return (
+    message.includes("not found") || message.includes("does not exist")
+  );
 }
 
 export function parseCallIdFromRoomName(roomName: string): string | null {

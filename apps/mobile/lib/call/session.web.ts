@@ -15,6 +15,7 @@ import { startAudioLevelLoop } from './audio-level-loop';
 export class WebCallSession implements CallSession {
   private room: Room | null = null;
   private muted = false;
+  private remoteMuted = false;
   private listeners = new Set<CallSessionListener>();
   private stopAudioLevelLoop: (() => void) | null = null;
 
@@ -27,6 +28,7 @@ export class WebCallSession implements CallSession {
     });
 
     room.on(RoomEvent.ParticipantConnected, () => {
+      this.applyRemoteMute();
       this.notifyParticipants();
     });
     room.on(RoomEvent.ParticipantDisconnected, () => {
@@ -45,6 +47,7 @@ export class WebCallSession implements CallSession {
     await room.connect(url, token);
     await room.localParticipant.setMicrophoneEnabled(true);
     this.muted = false;
+    this.remoteMuted = false;
     this.room = room;
     this.startAudioLevels();
     this.notifyConnection(true);
@@ -61,6 +64,7 @@ export class WebCallSession implements CallSession {
     const room = this.room;
     this.room = null;
     this.muted = false;
+    this.remoteMuted = false;
     await room.disconnect();
     this.notifyConnection(false);
     this.notifyParticipants();
@@ -74,6 +78,13 @@ export class WebCallSession implements CallSession {
     await this.room.localParticipant.setMicrophoneEnabled(!muted);
     this.muted = muted;
     this.notifyParticipants();
+  }
+
+  async setSpeakerphone(_enabled: boolean): Promise<void> {}
+
+  setRemoteAudioMuted(muted: boolean): void {
+    this.remoteMuted = muted;
+    this.applyRemoteMute();
   }
 
   isMuted(): boolean {
@@ -113,6 +124,17 @@ export class WebCallSession implements CallSession {
     return () => {
       this.listeners.delete(listener);
     };
+  }
+
+  private applyRemoteMute(): void {
+    if (!this.room) {
+      return;
+    }
+
+    const volume = this.remoteMuted ? 0 : 1;
+    for (const participant of this.room.remoteParticipants.values()) {
+      participant.setVolume(volume);
+    }
   }
 
   private startAudioLevels(): void {

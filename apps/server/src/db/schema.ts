@@ -270,3 +270,109 @@ import {
       }),
     ],
   );
+
+  export const callRecordings = pgTable(
+    "call_recordings",
+    {
+      id: uuid("id").defaultRandom().primaryKey(),
+
+      callId: uuid("call_id")
+        .notNull()
+        .references(() => calls.id, {
+          onDelete: "cascade",
+        }),
+
+      conversationId: uuid("conversation_id")
+        .notNull()
+        .references(() => conversations.id, {
+          onDelete: "cascade",
+        }),
+
+      userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id, {
+          onDelete: "cascade",
+        }),
+
+      callOffsetMs: integer("call_offset_ms").notNull(),
+
+      status: text("status").notNull(),
+
+      objectKey: text("object_key").notNull(),
+
+      contentType: text("content_type").notNull(),
+
+      format: text("format").notNull(),
+
+      providerEgressId: text("provider_egress_id"),
+
+      providerTrackSid: text("provider_track_sid").notNull(),
+
+      durationMs: integer("duration_ms"),
+
+      sizeBytes: integer("size_bytes"),
+
+      startedAt: timestamp("started_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+
+      endedAt: timestamp("ended_at", {
+        withTimezone: true,
+      }),
+
+      error: text("error"),
+    },
+    (table) => [
+      uniqueIndex("call_recordings_one_active_per_track_idx")
+        .on(table.callId, table.providerTrackSid)
+        .where(sql`${table.status} IN ('starting', 'recording')`),
+      index("call_recordings_call_user_offset_idx").on(
+        table.callId,
+        table.userId,
+        table.callOffsetMs,
+      ),
+    ],
+  );
+
+  export const callRecordingFragments = pgTable(
+    "call_recording_fragments",
+    {
+      id: uuid("id").defaultRandom().primaryKey(),
+
+      recordingId: uuid("recording_id")
+        .notNull()
+        .references(() => callRecordings.id, {
+          onDelete: "cascade",
+        }),
+
+      callId: uuid("call_id")
+        .notNull()
+        .references(() => calls.id, {
+          onDelete: "cascade",
+        }),
+
+      userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id, {
+          onDelete: "cascade",
+        }),
+
+      callOffsetMs: integer("call_offset_ms").notNull(),
+
+      durationMs: integer("duration_ms").notNull(),
+
+      objectKey: text("object_key").notNull(),
+
+      sizeBytes: integer("size_bytes").notNull(),
+    },
+    (table) => [
+      index("call_recording_fragments_call_offset_idx").on(
+        table.callId,
+        table.callOffsetMs,
+      ),
+      index("call_recording_fragments_recording_offset_idx").on(
+        table.recordingId,
+        table.callOffsetMs,
+      ),
+    ],
+  );

@@ -15,6 +15,8 @@ export interface CallSession {
   connect(url: string, token: string): Promise<void>;
   disconnect(): Promise<void>;
   setMuted(muted: boolean): Promise<void>;
+  setSpeakerphone(enabled: boolean): Promise<void>;
+  setRemoteAudioMuted(muted: boolean): void;
   isMuted(): boolean;
   getParticipants(): CallParticipantInfo[];
   addListener(listener: CallSessionListener): () => void;
