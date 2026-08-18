@@ -1,7 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import { Line, Rect, Svg } from 'react-native-svg';
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+} from 'react-native-reanimated';
+import { Rect, Svg } from 'react-native-svg';
 
 import { CATCHUP_RATE, isAtReadyEdge } from '@/lib/call/catchup';
 import { createPlaybackClock } from '@/lib/call/playback-clock';
@@ -11,14 +16,17 @@ import {
   clampMsPerPixel,
   clampViewStart,
   DEFAULT_VIEWPORT_MS,
+  LABEL_WIDTH,
+  OVERSCAN_PX,
 } from './timeline-math';
+import { panLog } from './timeline-debug';
 import type { TimelineTrack } from './timeline-model';
 import { TimelineRuler } from './timeline-ruler';
 
 const RULER_HEIGHT = 22;
 const MAX_TRACKS_VISIBLE = 4;
 const LIVE_EDGE_MS = 400;
-const LABEL_WIDTH = 88;
+const VIEW_COMMIT_MS = 32;
 
 type CatchupMode = 'off' | 'catching' | 'riding';
 
@@ -68,23 +76,115 @@ export function CallTimeline({
   const [soloUserId, setSoloUserId] = useState<string | null>(null);
   const [catchup, setCatchup] = useState<CatchupMode>('off');
   const [ridingSinceMs, setRidingSinceMs] = useState<number | null>(null);
-  const panOrigin = useRef({ viewStartMs: 0, msPerPixel: 30, selection: false });
-  const pinchOrigin = useRef({
+
+  const clockRef = useRef(createPlaybackClock());
+  const playheadMsRef = useRef(playheadMs);
+  const followLiveRef = useRef(followLive);
+  const playingRef = useRef(playing);
+  const catchupRef = useRef(catchup);
+  const gesturingRef = useRef(false);
+  const pendingViewStartRef = useRef(0);
+  const viewCommitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const replayActiveRef = useRef(onReplayActiveChange);
+  replayActiveRef.current = onReplayActiveChange;
+  playheadMsRef.current = playheadMs;
+  followLiveRef.current = followLive;
+  playingRef.current = playing;
+  catchupRef.current = catchup;
+
+  const viewStartSv = useSharedValue(0);
+  const msPerPixelSv = useSharedValue(30);
+  const playheadSv = useSharedValue(0);
+  const durationSv = useSharedValue(DEFAULT_VIEWPORT_MS);
+  const waveformWidthSv = useSharedValue(0);
+  const nowSv = useSharedValue(0);
+  const liveSv = useSharedValue(live ? 1 : 0);
+  const followLiveSv = useSharedValue(live ? 1 : 0);
+  const selectingSv = useSharedValue(0);
+  const committedViewStartSv = useSharedValue(0);
+  const contentShiftPx = useSharedValue(0);
+  const panOriginSv = useSharedValue({
+    viewStartMs: 0,
+    msPerPixel: 30,
+    selection: 0,
+  });
+  const lastSelectionSv = useSharedValue({ startMs: -1, endMs: -1 });
+  const panSampleSv = useSharedValue(0);
+  const tracksDuringPanRef = useRef(tracks);
+  const pinchOriginSv = useSharedValue({
     viewStartMs: 0,
     msPerPixel: 30,
     focalX: 0,
   });
-  const clockRef = useRef(createPlaybackClock());
 
   const waveformWidth = Math.max(0, width - LABEL_WIDTH);
   const durationMs = Math.max(
     frozenDurationMs ?? nowMs,
     DEFAULT_VIEWPORT_MS,
   );
-  const readySegments = recordings.filter(
-    (segment) => segment.status === 'ready' && segment.playbackUrl,
+  const readySegments = useMemo(
+    () =>
+      recordings.filter(
+        (segment) => segment.status === 'ready' && segment.playbackUrl,
+      ),
+    [recordings],
   );
   const canPlay = readySegments.length > 0;
+  const overscanPx = Math.max(waveformWidth, OVERSCAN_PX);
+
+  useEffect(() => {
+    waveformWidthSv.value = waveformWidth;
+  }, [waveformWidth, waveformWidthSv]);
+
+  useEffect(() => {
+    durationSv.value = durationMs;
+  }, [durationMs, durationSv]);
+
+  useEffect(() => {
+    nowSv.value = nowMs;
+  }, [nowMs, nowSv]);
+
+  useEffect(() => {
+    liveSv.value = live ? 1 : 0;
+  }, [live, liveSv]);
+
+  useEffect(() => {
+    followLiveSv.value = followLive ? 1 : 0;
+  }, [followLive, followLiveSv]);
+
+  useEffect(() => {
+    selectingSv.value = selecting ? 1 : 0;
+  }, [selecting, selectingSv]);
+
+  useEffect(() => {
+    msPerPixelSv.value = msPerPixel;
+  }, [msPerPixel, msPerPixelSv]);
+
+  useLayoutEffect(() => {
+    committedViewStartSv.value = viewStartMs;
+    const perPx = msPerPixelSv.value || 1;
+    const liveViewStart = viewStartSv.value;
+    const nextShiftPx = (viewStartMs - liveViewStart) / perPx;
+    if (gesturingRef.current) {
+      panLog('react.syncViewStart', {
+        gesturing: true,
+        viewStartMs: Math.round(viewStartMs),
+        liveViewStart: Math.round(liveViewStart),
+        nextShiftPx: Math.round(nextShiftPx * 10) / 10,
+      });
+      contentShiftPx.value = nextShiftPx;
+      return;
+    }
+
+    viewStartSv.value = viewStartMs;
+    contentShiftPx.value = 0;
+  }, [
+    committedViewStartSv,
+    contentShiftPx,
+    msPerPixelSv,
+    viewStartMs,
+    viewStartSv,
+  ]);
 
   useEffect(() => {
     if (waveformWidth <= 0) {
@@ -103,17 +203,34 @@ export function CallTimeline({
 
     const timer = setInterval(() => {
       const nextNow = Math.max(0, Date.now() - startedAtMs);
+      const dragging = gesturingRef.current;
+      if (dragging) {
+        panLog('timer.live100ms', {
+          gesturing: true,
+          followLive: followLiveRef.current,
+          setNowMs: true,
+          skippedViewFollow:
+            !followLiveRef.current ||
+            waveformWidth <= 0 ||
+            playingRef.current,
+          nowMs: Math.round(nextNow),
+        });
+      }
       setNowMs(nextNow);
+      nowSv.value = nextNow;
 
-      if (playing || catchup !== 'off') {
+      if (playingRef.current || catchupRef.current !== 'off') {
         clockRef.current.update({
           segments: readySegments,
           untilMs: frozenDurationMs ?? nextNow,
         });
       }
 
-      if (catchup !== 'off') {
-        if (catchup === 'catching' && isAtReadyEdge(playheadMs, nextNow)) {
+      if (catchupRef.current !== 'off') {
+        if (
+          catchupRef.current === 'catching' &&
+          isAtReadyEdge(playheadMsRef.current, nextNow)
+        ) {
           clockRef.current.setPlaybackRate(1);
           setCatchup('riding');
           setRidingSinceMs(nextNow);
@@ -124,37 +241,44 @@ export function CallTimeline({
           setCatchup('off');
           setRidingSinceMs(null);
           setFollowLive(true);
-          onReplayActiveChange?.(false);
+          replayActiveRef.current?.(false);
           onSafeJoinConsumed?.();
         }
         return;
       }
 
-      if (!followLive || waveformWidth <= 0 || playing) {
+      if (
+        gesturingRef.current ||
+        !followLiveRef.current ||
+        waveformWidth <= 0 ||
+        playingRef.current
+      ) {
         return;
       }
 
-      const viewportMs = waveformWidth * msPerPixel;
-      setViewStartMs(
-        clampViewStart(nextNow - viewportMs, viewportMs, nextNow),
+      const viewportMs = waveformWidth * msPerPixelSv.value;
+      const nextStart = clampViewStart(
+        nextNow - viewportMs,
+        viewportMs,
+        nextNow,
       );
+      viewStartSv.value = nextStart;
+      playheadSv.value = nextNow;
+      setViewStartMs(nextStart);
       setPlayheadMs(nextNow);
     }, 100);
 
     return () => clearInterval(timer);
   }, [
-    catchup,
-    followLive,
     frozenDurationMs,
     live,
-    msPerPixel,
-    onReplayActiveChange,
+    nowSv,
     onSafeJoinConsumed,
-    playheadMs,
-    playing,
+    playheadSv,
     readySegments,
     safeJoinLiveAtMs,
     startedAtMs,
+    viewStartSv,
     waveformWidth,
   ]);
 
@@ -166,117 +290,358 @@ export function CallTimeline({
     };
   }, []);
 
+  useEffect(() => {
+    if (!gesturingRef.current) {
+      tracksDuringPanRef.current = tracks;
+      return;
+    }
+
+    if (tracksDuringPanRef.current !== tracks) {
+      panLog('react.tracksChangedDuringPan', {
+        trackCount: tracks.length,
+      });
+      tracksDuringPanRef.current = tracks;
+    }
+  }, [tracks]);
+
+  const commitViewStart = useCallback((nextStart: number, immediate: boolean, reason: string) => {
+    pendingViewStartRef.current = nextStart;
+    if (immediate) {
+      if (viewCommitTimer.current) {
+        clearTimeout(viewCommitTimer.current);
+        viewCommitTimer.current = null;
+      }
+      panLog('commit.immediate', {
+        reason,
+        nextStart: Math.round(nextStart),
+      });
+      setViewStartMs(nextStart);
+      return;
+    }
+
+    if (viewCommitTimer.current) {
+      panLog('commit.throttleSkip', {
+        reason,
+        nextStart: Math.round(nextStart),
+        pending: Math.round(pendingViewStartRef.current),
+      });
+      return;
+    }
+
+    panLog('commit.throttleSchedule', {
+      reason,
+      nextStart: Math.round(nextStart),
+      delayMs: VIEW_COMMIT_MS,
+    });
+    viewCommitTimer.current = setTimeout(() => {
+      viewCommitTimer.current = null;
+      panLog('commit.throttleFire', {
+        reason,
+        nextStart: Math.round(pendingViewStartRef.current),
+      });
+      setViewStartMs(pendingViewStartRef.current);
+    }, VIEW_COMMIT_MS);
+  }, []);
+
+  const setGesturing = useCallback((value: boolean) => {
+    gesturingRef.current = value;
+    panLog(value ? 'gesture.begin' : 'gesture.flagOff', {
+      followLive: followLiveRef.current,
+    });
+  }, []);
+
+  const handleFollowLiveChange = useCallback((nextFollow: boolean) => {
+    if (followLiveRef.current === nextFollow) {
+      return;
+    }
+    panLog('react.followLive', { nextFollow });
+    setFollowLive(nextFollow);
+    if (nextFollow) {
+      replayActiveRef.current?.(false);
+    }
+  }, []);
+
+  const handlePanEnd = useCallback(
+    (nextStart: number, nextFollow: boolean) => {
+      panLog('gesture.end', {
+        nextStart: Math.round(nextStart),
+        nextFollow,
+      });
+      gesturingRef.current = false;
+      commitViewStart(nextStart, true, 'pan-end');
+      handleFollowLiveChange(nextFollow);
+    },
+    [commitViewStart, handleFollowLiveChange],
+  );
+
+  const handleSelectionDrag = useCallback((startMs: number, endMs: number) => {
+    setSelection((current) => {
+      if (current?.startMs === startMs && current.endMs === endMs) {
+        return current;
+      }
+      return { startMs, endMs };
+    });
+    if (followLiveRef.current) {
+      setFollowLive(false);
+      replayActiveRef.current?.(true);
+    }
+  }, []);
+
+  const handlePinchCommit = useCallback(
+    (nextMsPerPixel: number, nextStart: number) => {
+      setMsPerPixel(nextMsPerPixel);
+      commitViewStart(nextStart, false, 'pinch');
+      setFollowLive(false);
+    },
+    [commitViewStart],
+  );
+
+  const handlePinchEnd = useCallback(
+    (nextMsPerPixel: number, nextStart: number) => {
+      gesturingRef.current = false;
+      setMsPerPixel(nextMsPerPixel);
+      commitViewStart(nextStart, true, 'pinch-end');
+    },
+    [commitViewStart],
+  );
+
+  const handleTapSeek = useCallback((x: number) => {
+    if (waveformWidthSv.value <= 0 || x < LABEL_WIDTH) {
+      return;
+    }
+
+    const nextPlayhead = Math.max(
+      0,
+      Math.min(
+        durationSv.value,
+        viewStartSv.value + (x - LABEL_WIDTH) * msPerPixelSv.value,
+      ),
+    );
+    playheadSv.value = nextPlayhead;
+    setPlayheadMs(nextPlayhead);
+    setFollowLive(false);
+    replayActiveRef.current?.(true);
+    if (playingRef.current) {
+      clockRef.current.pause();
+      setPlaying(false);
+    }
+  }, [durationSv, msPerPixelSv, playheadSv, viewStartSv, waveformWidthSv]);
+
+  const handlePanSample = useCallback(
+    (
+      translationX: number,
+      nextStart: number,
+      committed: number,
+      shiftPx: number,
+      frame: number,
+    ) => {
+      panLog('worklet.panSample', {
+        frame,
+        translationX: Math.round(translationX),
+        nextStart: Math.round(nextStart),
+        committed: Math.round(committed),
+        shiftPx: Math.round(shiftPx * 10) / 10,
+      });
+    },
+    [],
+  );
+
+  const handleSolo = useCallback((userId: string) => {
+    setSoloUserId((current) => (current === userId ? null : userId));
+  }, []);
+
   const pan = useMemo(
     () =>
       Gesture.Pan()
-        .runOnJS(true)
         .activeOffsetX([-8, 8])
         .onBegin(() => {
-          panOrigin.current = {
-            viewStartMs,
-            msPerPixel,
-            selection: selecting,
+          runOnJS(setGesturing)(true);
+          panSampleSv.value = 0;
+          panOriginSv.value = {
+            viewStartMs: viewStartSv.value,
+            msPerPixel: msPerPixelSv.value,
+            selection: selectingSv.value,
           };
         })
         .onUpdate((event) => {
-          if (waveformWidth <= 0) {
+          const origin = panOriginSv.value;
+          const paneWidth = waveformWidthSv.value;
+          if (paneWidth <= 0) {
             return;
           }
 
-          if (panOrigin.current.selection) {
-            const start = panOrigin.current.viewStartMs;
-            const fromMs = start + Math.max(0, event.x - LABEL_WIDTH) * panOrigin.current.msPerPixel - event.translationX * panOrigin.current.msPerPixel;
-            const toMs = start + Math.max(0, event.x - LABEL_WIDTH) * panOrigin.current.msPerPixel;
+          if (origin.selection) {
+            const fromMs =
+              origin.viewStartMs +
+              Math.max(0, event.x - LABEL_WIDTH) * origin.msPerPixel -
+              event.translationX * origin.msPerPixel;
+            const toMs =
+              origin.viewStartMs +
+              Math.max(0, event.x - LABEL_WIDTH) * origin.msPerPixel;
             const left = Math.max(0, Math.min(fromMs, toMs));
-            const right = Math.min(durationMs, Math.max(fromMs, toMs));
-            setSelection({ startMs: left, endMs: Math.max(left + 50, right) });
-            setFollowLive(false);
-            onReplayActiveChange?.(true);
+            const right = Math.min(
+              durationSv.value,
+              Math.max(fromMs, toMs),
+            );
+            const nextStartMs = left;
+            const nextEndMs = Math.max(left + 50, right);
+            const last = lastSelectionSv.value;
+            if (last.startMs === nextStartMs && last.endMs === nextEndMs) {
+              return;
+            }
+            lastSelectionSv.value = { startMs: nextStartMs, endMs: nextEndMs };
+            runOnJS(handleSelectionDrag)(nextStartMs, nextEndMs);
             return;
           }
 
-          const viewportMs = waveformWidth * panOrigin.current.msPerPixel;
+          const viewportMs = paneWidth * origin.msPerPixel;
           const nextStart = clampViewStart(
-            panOrigin.current.viewStartMs - event.translationX * panOrigin.current.msPerPixel,
+            origin.viewStartMs - event.translationX * origin.msPerPixel,
             viewportMs,
-            durationMs,
+            durationSv.value,
           );
-          setViewStartMs(nextStart);
-          const viewEnd = nextStart + viewportMs;
-          const nextFollow = live && viewEnd >= nowMs - LIVE_EDGE_MS;
-          setFollowLive(nextFollow);
-          if (nextFollow) {
-            onReplayActiveChange?.(false);
+          viewStartSv.value = nextStart;
+          const shiftPx =
+            (committedViewStartSv.value - nextStart) / origin.msPerPixel;
+          contentShiftPx.value = shiftPx;
+          panSampleSv.value += 1;
+          if (panSampleSv.value % 12 === 0) {
+            runOnJS(handlePanSample)(
+              event.translationX,
+              nextStart,
+              committedViewStartSv.value,
+              shiftPx,
+              panSampleSv.value,
+            );
           }
+          const nextFollow =
+            liveSv.value === 1 &&
+            nextStart + viewportMs >= nowSv.value - LIVE_EDGE_MS
+              ? 1
+              : 0;
+          if (nextFollow !== followLiveSv.value) {
+            followLiveSv.value = nextFollow;
+            runOnJS(handleFollowLiveChange)(nextFollow === 1);
+          }
+        })
+        .onEnd(() => {
+          const paneWidth = waveformWidthSv.value;
+          const perPx = msPerPixelSv.value || 1;
+          const viewportMs = paneWidth * perPx;
+          const nextStart = viewStartSv.value;
+          const nextFollow =
+            liveSv.value === 1 &&
+            nextStart + viewportMs >= nowSv.value - LIVE_EDGE_MS;
+          runOnJS(handlePanEnd)(nextStart, nextFollow);
         }),
-    [durationMs, live, msPerPixel, nowMs, selecting, viewStartMs, waveformWidth],
+    [
+      committedViewStartSv,
+      contentShiftPx,
+      durationSv,
+      followLiveSv,
+      handleFollowLiveChange,
+      handlePanEnd,
+      handlePanSample,
+      handleSelectionDrag,
+      lastSelectionSv,
+      liveSv,
+      msPerPixelSv,
+      nowSv,
+      panOriginSv,
+      panSampleSv,
+      selectingSv,
+      setGesturing,
+      viewStartSv,
+      waveformWidthSv,
+    ],
   );
 
   const pinch = useMemo(
     () =>
       Gesture.Pinch()
-        .runOnJS(true)
         .onBegin((event) => {
-          pinchOrigin.current = {
-            viewStartMs,
-            msPerPixel,
+          runOnJS(setGesturing)(true);
+          pinchOriginSv.value = {
+            viewStartMs: viewStartSv.value,
+            msPerPixel: msPerPixelSv.value,
             focalX: Math.max(0, event.focalX - LABEL_WIDTH),
           };
         })
         .onUpdate((event) => {
-          if (waveformWidth <= 0 || event.scale <= 0) {
+          const paneWidth = waveformWidthSv.value;
+          if (paneWidth <= 0 || event.scale <= 0) {
             return;
           }
 
-          const origin = pinchOrigin.current;
+          const origin = pinchOriginSv.value;
           const nextMsPerPixel = clampMsPerPixel(
             origin.msPerPixel / event.scale,
-            waveformWidth,
-            durationMs,
+            paneWidth,
+            durationSv.value,
           );
           const focalTime = origin.viewStartMs + origin.focalX * origin.msPerPixel;
-          const viewportMs = waveformWidth * nextMsPerPixel;
-          setMsPerPixel(nextMsPerPixel);
-          setViewStartMs(
-            clampViewStart(focalTime - origin.focalX * nextMsPerPixel, viewportMs, durationMs),
+          const viewportMs = paneWidth * nextMsPerPixel;
+          const nextStart = clampViewStart(
+            focalTime - origin.focalX * nextMsPerPixel,
+            viewportMs,
+            durationSv.value,
           );
+          msPerPixelSv.value = nextMsPerPixel;
+          viewStartSv.value = nextStart;
+          runOnJS(handlePinchCommit)(nextMsPerPixel, nextStart);
+        })
+        .onEnd(() => {
+          runOnJS(handlePinchEnd)(msPerPixelSv.value, viewStartSv.value);
         }),
-    [durationMs, msPerPixel, viewStartMs, waveformWidth],
+    [
+      contentShiftPx,
+      durationSv,
+      handlePinchCommit,
+      handlePinchEnd,
+      setGesturing,
+      msPerPixelSv,
+      pinchOriginSv,
+      viewStartSv,
+      waveformWidthSv,
+    ],
   );
 
   const tap = useMemo(
     () =>
       Gesture.Tap()
-        .runOnJS(true)
         .onEnd((event) => {
-          if (waveformWidth <= 0 || event.x < LABEL_WIDTH) {
-            return;
-          }
-
-          const nextPlayhead = Math.max(
-            0,
-            Math.min(durationMs, viewStartMs + (event.x - LABEL_WIDTH) * msPerPixel),
-          );
-          setPlayheadMs(nextPlayhead);
-          setFollowLive(false);
-          onReplayActiveChange?.(true);
-          if (playing) {
-            clockRef.current.pause();
-            setPlaying(false);
-          }
+          runOnJS(handleTapSeek)(event.x);
         }),
-    [durationMs, msPerPixel, playing, viewStartMs, waveformWidth],
+    [handleTapSeek],
   );
 
   const composed = useMemo(
-    () => Gesture.Simultaneous(Gesture.Exclusive(tap, pan), pinch),
+    () => Gesture.Simultaneous(Gesture.Exclusive(pan, tap), pinch),
     [pan, pinch, tap],
   );
 
-  const cursorMs = followLive && live && frozenDurationMs === null ? nowMs : playheadMs;
-  const playheadX =
-    waveformWidth > 0 ? (cursorMs - viewStartMs) / msPerPixel : -1;
-  const showPlayhead = playheadX >= 0 && playheadX <= waveformWidth;
+  const cursorMs =
+    followLive && live && frozenDurationMs === null ? nowMs : playheadMs;
+
+  useEffect(() => {
+    playheadSv.value = cursorMs;
+  }, [cursorMs, playheadSv]);
+
+  const waveformShiftStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: contentShiftPx.value }],
+  }));
+
+  const playheadStyle = useAnimatedStyle(() => {
+    const perPx = msPerPixelSv.value || 1;
+    const x = LABEL_WIDTH + (playheadSv.value - viewStartSv.value) / perPx;
+    const paneWidth = waveformWidthSv.value;
+    const visible = x >= LABEL_WIDTH - 1 && x <= LABEL_WIDTH + paneWidth + 1;
+    return {
+      opacity: visible ? 1 : 0,
+      transform: [{ translateX: x }],
+    };
+  });
+
   const tracksHeight = Math.min(
     Math.max(tracks.length, 1) * TRACK_HEIGHT,
     MAX_TRACKS_VISIBLE * TRACK_HEIGHT,
@@ -289,6 +654,8 @@ export function CallTimeline({
     selection && waveformWidth > 0
       ? (selection.endMs - selection.startMs) / msPerPixel
       : 0;
+  const drawWidth = waveformWidth + overscanPx * 2;
+  const drawStartMs = viewStartMs - overscanPx * msPerPixel;
 
   function handlePlayPause() {
     if (playing) {
@@ -306,7 +673,8 @@ export function CallTimeline({
     setFollowLive(false);
     setCatchup('off');
     setRidingSinceMs(null);
-    onReplayActiveChange?.(true);
+    replayActiveRef.current?.(true);
+    playheadSv.value = startMs;
     setPlayheadMs(startMs);
     setPlaying(true);
     clockRef.current.play({
@@ -316,6 +684,7 @@ export function CallTimeline({
       soloUserId,
       playbackRate: 1,
       onPlayhead: (next) => {
+        playheadSv.value = next;
         setPlayheadMs(next);
       },
       onEnded: () => {
@@ -328,14 +697,14 @@ export function CallTimeline({
     if (!canPlay) {
       setFollowLive(true);
       setCatchup('off');
-      onReplayActiveChange?.(false);
+      replayActiveRef.current?.(false);
       return;
     }
 
     setFollowLive(false);
     setCatchup('catching');
     setRidingSinceMs(null);
-    onReplayActiveChange?.(true);
+    replayActiveRef.current?.(true);
     setPlaying(true);
     clockRef.current.play({
       playheadMs: cursorMs,
@@ -344,6 +713,7 @@ export function CallTimeline({
       soloUserId,
       playbackRate: CATCHUP_RATE,
       onPlayhead: (next) => {
+        playheadSv.value = next;
         setPlayheadMs(next);
       },
       onEnded: () => {
@@ -359,7 +729,7 @@ export function CallTimeline({
     setCatchup('off');
     setRidingSinceMs(null);
     setFollowLive(true);
-    onReplayActiveChange?.(false);
+    replayActiveRef.current?.(false);
     onSafeJoinConsumed?.();
   }
 
@@ -445,12 +815,21 @@ export function CallTimeline({
         >
           <View style={styles.rulerRow}>
             <View style={styles.rulerGutter} />
-            <TimelineRuler
-              width={waveformWidth}
-              height={RULER_HEIGHT}
-              viewStartMs={viewStartMs}
-              msPerPixel={msPerPixel}
-            />
+            <View style={[styles.rulerClip, { width: waveformWidth }]}>
+              <Animated.View
+                style={[
+                  { width: drawWidth, marginLeft: -overscanPx },
+                  waveformShiftStyle,
+                ]}
+              >
+                <TimelineRuler
+                  width={drawWidth}
+                  height={RULER_HEIGHT}
+                  viewStartMs={drawStartMs}
+                  msPerPixel={msPerPixel}
+                />
+              </Animated.View>
+            </View>
           </View>
           <ScrollView
             style={{ maxHeight: tracksHeight || TRACK_HEIGHT }}
@@ -469,19 +848,17 @@ export function CallTimeline({
                   viewStartMs={viewStartMs}
                   msPerPixel={msPerPixel}
                   callStartedAtMs={startedAtMs}
+                  overscanPx={overscanPx}
+                  shiftStyle={waveformShiftStyle}
                   solo={soloUserId === track.userId}
-                  onPressLabel={() =>
-                    setSoloUserId((current) =>
-                      current === track.userId ? null : track.userId,
-                    )
-                  }
+                  onPressLabel={handleSolo}
                 />
               ))
             )}
           </ScrollView>
           <View pointerEvents="none" style={styles.playheadLayer}>
-            <Svg width={width} height={RULER_HEIGHT + tracksHeight}>
-              {selection && selectionWidth > 0 ? (
+            {selection && selectionWidth > 0 ? (
+              <Svg width={width} height={RULER_HEIGHT + tracksHeight}>
                 <Rect
                   x={LABEL_WIDTH + selectionX}
                   y={0}
@@ -490,18 +867,15 @@ export function CallTimeline({
                   fill="#22c55e"
                   opacity={0.2}
                 />
-              ) : null}
-              {showPlayhead ? (
-                <Line
-                  x1={LABEL_WIDTH + playheadX}
-                  y1={0}
-                  x2={LABEL_WIDTH + playheadX}
-                  y2={RULER_HEIGHT + tracksHeight}
-                  stroke="#facc15"
-                  strokeWidth={1.5}
-                />
-              ) : null}
-            </Svg>
+              </Svg>
+            ) : null}
+            <Animated.View
+              style={[
+                styles.playhead,
+                { height: RULER_HEIGHT + tracksHeight },
+                playheadStyle,
+              ]}
+            />
           </View>
         </View>
       </GestureDetector>
@@ -578,6 +952,9 @@ const styles = StyleSheet.create({
     width: LABEL_WIDTH,
     backgroundColor: '#14532d',
   },
+  rulerClip: {
+    overflow: 'hidden',
+  },
   emptyTrack: {
     height: TRACK_HEIGHT,
     justifyContent: 'center',
@@ -589,5 +966,13 @@ const styles = StyleSheet.create({
   },
   playheadLayer: {
     ...StyleSheet.absoluteFillObject,
+  },
+  playhead: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: 2,
+    marginLeft: -1,
+    backgroundColor: '#facc15',
   },
 });

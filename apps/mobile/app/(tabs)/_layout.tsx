@@ -19,12 +19,6 @@ export default function TabLayout() {
           title: 'Conversations',
         }}
       />
-      <Tabs.Screen
-        name="explore"
-        options={{
-          href: null,
-        }}
-      />
     </Tabs>
   );
 }

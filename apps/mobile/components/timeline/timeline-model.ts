@@ -1,4 +1,5 @@
 import {
+  WAVEFORM_CHUNK_DURATION_MS,
   WAVEFORM_SAMPLE_INTERVAL_MS,
   chunkStartForOffset,
 } from '@/lib/call/waveform-sampler';
@@ -20,7 +21,7 @@ export type TimelineTrack = {
   chunks: TimelineChunk[];
 };
 
-export function mergeChunk(
+function mergeChunk(
   existing: number[] | undefined,
   incoming: number[],
 ): number[] {
@@ -168,38 +169,67 @@ export function applyParticipantLeft(
   });
 }
 
-export function isInSession(
+export type SessionRange = {
+  startMs: number;
+  endMs: number;
+};
+
+export function sessionRanges(
   sessions: TimelineSession[],
   callStartedAtMs: number,
+): SessionRange[] {
+  return sessions.map((session) => ({
+    startMs: Date.parse(session.joinedAt) - callStartedAtMs,
+    endMs: session.leftAt
+      ? Date.parse(session.leftAt) - callStartedAtMs
+      : Number.POSITIVE_INFINITY,
+  }));
+}
+
+export function isInSessionRanges(
+  ranges: SessionRange[],
   offsetMs: number,
 ): boolean {
-  if (sessions.length === 0) {
+  if (ranges.length === 0) {
     return true;
   }
 
-  return sessions.some((session) => {
-    const joinedOffset = Date.parse(session.joinedAt) - callStartedAtMs;
-    const leftOffset = session.leftAt
-      ? Date.parse(session.leftAt) - callStartedAtMs
-      : Number.POSITIVE_INFINITY;
-    return offsetMs >= joinedOffset && offsetMs < leftOffset;
-  });
+  return ranges.some(
+    (range) => offsetMs >= range.startMs && offsetMs < range.endMs,
+  );
+}
+
+export type ChunkIndex = Map<number, number[]>;
+
+export function indexChunks(chunks: TimelineChunk[]): ChunkIndex {
+  const index: ChunkIndex = new Map();
+  for (const chunk of chunks) {
+    index.set(chunk.startOffsetMs, chunk.amplitudes);
+  }
+  return index;
 }
 
 export function amplitudeAt(
   chunks: TimelineChunk[],
   offsetMs: number,
 ): number {
+  return amplitudeAtIndexed(indexChunks(chunks), offsetMs);
+}
+
+export function amplitudeAtIndexed(
+  index: ChunkIndex,
+  offsetMs: number,
+): number {
   const startOffsetMs = chunkStartForOffset(offsetMs);
-  const chunk = chunks.find((item) => item.startOffsetMs === startOffsetMs);
-  if (!chunk) {
+  const amplitudes = index.get(startOffsetMs);
+  if (!amplitudes) {
     return 0;
   }
 
-  const index = Math.floor(
+  const sampleIndex = Math.floor(
     (offsetMs - startOffsetMs) / WAVEFORM_SAMPLE_INTERVAL_MS,
   );
-  return chunk.amplitudes[index] ?? 0;
+  return amplitudes[sampleIndex] ?? 0;
 }
 
 export function maxAmplitudeInRange(
@@ -207,16 +237,50 @@ export function maxAmplitudeInRange(
   startMs: number,
   endMs: number,
 ): number {
-  let max = 0;
-  const alignedStart = Math.max(
-    0,
-    Math.floor(startMs / WAVEFORM_SAMPLE_INTERVAL_MS) * WAVEFORM_SAMPLE_INTERVAL_MS,
-  );
+  return maxAmplitudeInRangeIndexed(indexChunks(chunks), startMs, endMs);
+}
 
-  for (let offset = alignedStart; offset < endMs; offset += WAVEFORM_SAMPLE_INTERVAL_MS) {
-    max = Math.max(max, amplitudeAt(chunks, offset));
-    if (max === 255) {
-      return max;
+export function maxAmplitudeInRangeIndexed(
+  index: ChunkIndex,
+  startMs: number,
+  endMs: number,
+): number {
+  if (endMs <= startMs) {
+    return 0;
+  }
+
+  let max = 0;
+  const firstChunk = chunkStartForOffset(Math.max(0, startMs));
+  const lastChunk = chunkStartForOffset(Math.max(0, endMs - 1));
+
+  for (
+    let chunkStart = firstChunk;
+    chunkStart <= lastChunk;
+    chunkStart += WAVEFORM_CHUNK_DURATION_MS
+  ) {
+    const amplitudes = index.get(chunkStart);
+    if (!amplitudes || amplitudes.length === 0) {
+      continue;
+    }
+
+    const rangeStart = Math.max(startMs, chunkStart);
+    const rangeEnd = Math.min(endMs, chunkStart + WAVEFORM_CHUNK_DURATION_MS);
+    let sampleIndex = Math.floor(
+      (rangeStart - chunkStart) / WAVEFORM_SAMPLE_INTERVAL_MS,
+    );
+    const lastIndex = Math.min(
+      amplitudes.length - 1,
+      Math.floor((rangeEnd - 1 - chunkStart) / WAVEFORM_SAMPLE_INTERVAL_MS),
+    );
+
+    for (; sampleIndex <= lastIndex; sampleIndex += 1) {
+      const value = amplitudes[sampleIndex] ?? 0;
+      if (value > max) {
+        max = value;
+      }
+      if (max === 255) {
+        return 255;
+      }
     }
   }
 

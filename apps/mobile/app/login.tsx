@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Redirect, type Href } from 'expo-router';
+import { Link, Redirect, type Href } from 'expo-router';
 import {
   ActivityIndicator,
   Platform,
@@ -66,6 +66,12 @@ export default function LoginScreen() {
         </Text>
       </Pressable>
 
+      <Link href={'/timeline-test' as Href} asChild>
+        <Pressable style={[styles.button, styles.testButton]}>
+          <Text style={styles.buttonText}>Timeline Test</Text>
+        </Pressable>
+      </Link>
+
       {isLoading ? <ActivityIndicator style={styles.spinner} /> : null}
       {error ? <Text style={styles.error}>{error}</Text> : null}
     </SafeAreaView>
@@ -105,6 +111,9 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderRadius: 10,
+  },
+  testButton: {
+    backgroundColor: '#334155',
   },
   buttonText: {
     color: '#ffffff',

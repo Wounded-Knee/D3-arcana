@@ -29,6 +29,7 @@ function RootNavigator() {
           name="conversation/[id]"
           options={{ title: 'Conversation' }}
         />
+        <Stack.Screen name="timeline-test" options={{ title: 'Timeline Test' }} />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>

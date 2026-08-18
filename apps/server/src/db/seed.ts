@@ -96,8 +96,6 @@ async function seed() {
 
   console.log(`DEV_AUTH_TOKENS=${devAuthTokens}`);
   console.log("");
-  console.log("Restart the server if it is already running: pnpm dev:server");
-  console.log("");
   console.log("Development tokens:");
   console.log(`  ALICE_TOKEN=${ALICE_TOKEN}`);
   console.log(`  BOB_TOKEN=${BOB_TOKEN}`);

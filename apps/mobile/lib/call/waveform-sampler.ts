@@ -1,7 +1,7 @@
 export const WAVEFORM_SAMPLE_INTERVAL_MS = 50;
 export const WAVEFORM_SAMPLE_RATE_HZ = 20;
 export const WAVEFORM_CHUNK_DURATION_MS = 1000;
-export const WAVEFORM_BATCH_SAMPLES = 10;
+export const WAVEFORM_BATCH_SAMPLES = 3;
 export const WAVEFORM_MAX_PENDING_BATCHES = 60;
 
 export function alignOffsetMs(offsetMs: number): number {
