@@ -26,10 +26,7 @@ For **LAN-wide web**, start with `pnpm --filter mobile web` (`--lan`) and open `
 # LiveKit SFU + Redis + Egress + MinIO (detects current LAN IP for phone ICE)
 pnpm dev:livekit
 
-# Apply DB migrations (after schema changes)
-pnpm --filter server db:migrate
-
-# API (LIVEKIT_PUBLIC_URL defaults to ws://<preferred-lan-ip>:7880)
+# API (migrates, seeds Alice/Bob, then watches). LIVEKIT_PUBLIC_URL defaults to ws://<preferred-lan-ip>:7880
 pnpm dev:server
 
 # Web client (primary call testing — two browser tabs)

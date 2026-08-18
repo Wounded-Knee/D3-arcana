@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { G, Line, Svg, Text as SvgText } from 'react-native-svg';
 
 import { ticksForViewport } from './timeline-math';
@@ -9,7 +10,7 @@ type TimelineRulerProps = {
   msPerPixel: number;
 };
 
-export function TimelineRuler({
+export const TimelineRuler = memo(function TimelineRuler({
   width,
   height,
   viewStartMs,
@@ -54,4 +55,4 @@ export function TimelineRuler({
       ))}
     </Svg>
   );
-}
+});

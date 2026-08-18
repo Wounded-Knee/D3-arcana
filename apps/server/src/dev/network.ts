@@ -75,7 +75,7 @@ export function logDevelopmentEndpoints(port: number | string): void {
   if (!process.env.DEV_AUTH_TOKENS?.trim()) {
     console.log("");
     console.warn(
-      "DEV_AUTH_TOKENS is not set. Run `pnpm --filter server db:seed` and add the printed value to apps/server/.env",
+      "DEV_AUTH_TOKENS is not set. Restart with `pnpm dev:server` (it migrates and seeds) or run `pnpm --filter server db:seed`.",
     );
   }
 }

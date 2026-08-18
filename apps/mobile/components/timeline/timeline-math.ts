@@ -4,6 +4,8 @@ const MIN_TICK_PX = 64;
 export const MIN_VIEWPORT_MS = 5_000;
 export const DEFAULT_VIEWPORT_MS = 30_000;
 export const BAR_WIDTH_PX = 3;
+export const LABEL_WIDTH = 88;
+export const OVERSCAN_PX = 96;
 
 export function tickIntervalMs(msPerPixel: number): number {
   const needed = msPerPixel * MIN_TICK_PX;
@@ -48,6 +50,7 @@ export function clampMsPerPixel(
   width: number,
   durationMs: number,
 ): number {
+  'worklet';
   if (width <= 0) {
     return msPerPixel;
   }
@@ -62,6 +65,7 @@ export function clampViewStart(
   viewportMs: number,
   durationMs: number,
 ): number {
+  'worklet';
   const maxStart = Math.max(0, durationMs - viewportMs * 0.15);
   return Math.min(maxStart, Math.max(0, viewStartMs));
 }
