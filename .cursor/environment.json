@@ -1,0 +1,15 @@
+{
+  "name": "D3 Arcana",
+  "install": "./.cursor/install.sh",
+  "start": "./.cursor/start.sh",
+  "terminals": [
+    {
+      "name": "server",
+      "command": "pnpm --filter server dev"
+    },
+    {
+      "name": "mobile-web",
+      "command": "pnpm --filter mobile exec expo start --web --port 8081"
+    }
+  ]
+}
