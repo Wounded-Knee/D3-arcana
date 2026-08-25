@@ -52,6 +52,36 @@ export function extractWavPcm(wav: Buffer): Buffer {
   return wav.subarray(WAV_HEADER_BYTES, end);
 }
 
+export function wavFormat(wav: Buffer): { sampleRate: number; channels: number } {
+  return {
+    channels: wav.length >= 24 ? wav.readUInt16LE(22) : PCM_CHANNELS,
+    sampleRate: wav.length >= 28 ? wav.readUInt32LE(24) : PCM_SAMPLE_RATE_HZ,
+  };
+}
+
+export function wavDurationMs(wav: Buffer): number {
+  const { sampleRate, channels } = wavFormat(wav);
+  return pcmDurationMs(extractWavPcm(wav), sampleRate, channels);
+}
+
+export function downmixInterleavedToMono(pcm: Buffer, channels: number): Buffer {
+  if (channels <= 1) {
+    return pcm;
+  }
+
+  const frames = Math.floor(pcm.length / (2 * channels));
+  const out = Buffer.alloc(frames * 2);
+  for (let i = 0; i < frames; i += 1) {
+    let sum = 0;
+    for (let channel = 0; channel < channels; channel += 1) {
+      sum += pcm.readInt16LE((i * channels + channel) * 2);
+    }
+    const sample = Math.round(sum / channels);
+    out.writeInt16LE(Math.max(-32768, Math.min(32767, sample)), i * 2);
+  }
+  return out;
+}
+
 export function concatWavFiles(wavs: Buffer[]): Buffer {
   return encodeWavPcm16le(Buffer.concat(wavs.map(extractWavPcm)));
 }
@@ -62,28 +92,35 @@ export function concatTimedWavs(
   channels = PCM_CHANNELS,
 ): Buffer {
   if (clips.length === 0) {
-    return encodeWavPcm16le(Buffer.alloc(0));
+    return encodeWavPcm16le(Buffer.alloc(0), sampleRate, 1);
   }
 
   const sorted = [...clips].sort((a, b) => a.callOffsetMs - b.callOffsetMs);
+  const first = wavFormat(sorted[0]!.wav);
+  const outRate = first.sampleRate || sampleRate;
+  const outChannels = 1;
   const parts: Buffer[] = [];
   let cursorMs = sorted[0]!.callOffsetMs;
 
   for (const clip of sorted) {
-    const pcm = extractWavPcm(clip.wav);
+    const format = wavFormat(clip.wav);
+    const pcm = downmixInterleavedToMono(
+      extractWavPcm(clip.wav),
+      format.channels || channels,
+    );
     if (clip.callOffsetMs > cursorMs) {
       const gapBytes = fragmentByteLength(
         clip.callOffsetMs - cursorMs,
-        sampleRate,
-        channels,
+        outRate,
+        outChannels,
       );
       if (gapBytes > 0) {
         parts.push(Buffer.alloc(gapBytes));
       }
     }
     parts.push(pcm);
-    cursorMs = clip.callOffsetMs + pcmDurationMs(pcm, sampleRate, channels);
+    cursorMs = clip.callOffsetMs + pcmDurationMs(pcm, outRate, outChannels);
   }
 
-  return encodeWavPcm16le(Buffer.concat(parts));
+  return encodeWavPcm16le(Buffer.concat(parts), outRate, outChannels);
 }

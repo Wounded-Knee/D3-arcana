@@ -7,6 +7,7 @@ import {
   extractWavPcm,
   fragmentByteLength,
   pcmDurationMs,
+  wavDurationMs,
 } from "./wav.js";
 
 describe("wav encoder", () => {
@@ -34,6 +35,19 @@ describe("wav encoder", () => {
       { wav: first, callOffsetMs: 0 },
       { wav: second, callOffsetMs: 1000 },
     ]);
-    expect(pcmDurationMs(extractWavPcm(gapped))).toBe(1500);
+    expect(gapped.readUInt16LE(22)).toBe(1);
+    expect(wavDurationMs(gapped)).toBe(1500);
+  });
+
+  it("downmixes identical stereo clips to mono without changing duration", () => {
+    const pcm = Buffer.alloc(fragmentByteLength(500));
+    for (let i = 0; i < pcm.length; i += 2) {
+      pcm.writeInt16LE(i % 2000, i);
+    }
+    const stereo = encodeWavPcm16le(pcm);
+    const joined = concatTimedWavs([{ wav: stereo, callOffsetMs: 0 }]);
+
+    expect(joined.readUInt16LE(22)).toBe(1);
+    expect(wavDurationMs(joined)).toBe(500);
   });
 });

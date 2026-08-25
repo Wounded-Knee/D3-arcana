@@ -19,6 +19,7 @@ const MAX_PLAYERS = 16;
 type PooledPlayer = {
   player: AudioPlayer;
   uri: string;
+  appliedRate: number | null;
 };
 
 let audioModeReady = false;
@@ -114,6 +115,19 @@ export function createPlaybackClock(): PlaybackClock {
     }
   }
 
+  function applyPlaybackRate(pooled: PooledPlayer): void {
+    if (pooled.appliedRate === rate) {
+      return;
+    }
+    const previous = pooled.appliedRate;
+    pooled.appliedRate = rate;
+    pooled.player.shouldCorrectPitch = rate !== 1;
+    if (rate === 1 && previous == null) {
+      return;
+    }
+    pooled.player.setPlaybackRate(rate);
+  }
+
   function playerFor(segment: RecordingSegment): AudioPlayer | null {
     if (!segment.playbackUrl) {
       return null;
@@ -125,16 +139,15 @@ export function createPlaybackClock(): PlaybackClock {
         { uri: segment.playbackUrl },
         { keepAudioSessionActive: true },
       );
-      player.shouldCorrectPitch = true;
-      player.setPlaybackRate(rate);
-      pooled = { player, uri: segment.playbackUrl };
+      pooled = { player, uri: segment.playbackUrl, appliedRate: null };
       players.set(segment.id, pooled);
     } else if (pooled.uri !== segment.playbackUrl) {
       pooled.player.replace({ uri: segment.playbackUrl });
       pooled.uri = segment.playbackUrl;
+      pooled.appliedRate = null;
     }
 
-    pooled.player.setPlaybackRate(rate);
+    applyPlaybackRate(pooled);
     return pooled.player;
   }
 
@@ -261,8 +274,8 @@ export function createPlaybackClock(): PlaybackClock {
       originPlayhead = playheadMs;
       startedAt = performance.now();
       rate = nextRate;
-      for (const { player } of players.values()) {
-        player.setPlaybackRate(nextRate);
+      for (const pooled of players.values()) {
+        applyPlaybackRate(pooled);
       }
     },
     update(options) {

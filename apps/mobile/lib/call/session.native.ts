@@ -1,6 +1,7 @@
 import './setup';
 import { Platform } from 'react-native';
 import {
+  AudioPresets,
   ConnectionState,
   Room,
   RoomEvent,
@@ -34,10 +35,10 @@ export class NativeCallSession implements CallSession {
     const { AudioSession, AndroidAudioTypePresets } = livekitNative();
     await AudioSession.configureAudio({
       android: {
-        preferredOutputList: ['bluetooth', 'headset', 'earpiece', 'speaker'],
-        audioTypeOptions: AndroidAudioTypePresets.communication,
+        preferredOutputList: ['bluetooth', 'headset', 'speaker', 'earpiece'],
+        audioTypeOptions: AndroidAudioTypePresets.media,
       },
-      ios: { defaultOutput: 'earpiece' },
+      ios: { defaultOutput: 'speaker' },
     });
     await AudioSession.startAudioSession();
     this.audioSessionStarted = true;
@@ -46,6 +47,16 @@ export class NativeCallSession implements CallSession {
       const room = new Room({
         adaptiveStream: true,
         dynacast: true,
+        audioCaptureDefaults: {
+          echoCancellation: true,
+          noiseSuppression: false,
+          autoGainControl: true,
+          voiceIsolation: false,
+        },
+        publishDefaults: {
+          audioPreset: AudioPresets.musicHighQuality,
+          dtx: false,
+        },
       });
 
       room.on(RoomEvent.ParticipantConnected, () => {

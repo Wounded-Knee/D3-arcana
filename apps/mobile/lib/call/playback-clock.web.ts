@@ -90,7 +90,9 @@ export function createPlaybackClock(): PlaybackClock {
       element.src = segment.playbackUrl;
     }
 
-    element.playbackRate = rate;
+    if (element.playbackRate !== rate) {
+      element.playbackRate = rate;
+    }
     return element;
   }
 
@@ -169,6 +171,15 @@ export function createPlaybackClock(): PlaybackClock {
     }
   }
 
+  function dispose(): void {
+    pause();
+    for (const element of elements.values()) {
+      element.pause();
+      element.src = '';
+    }
+    elements.clear();
+  }
+
   return {
     play(options) {
       pause();
@@ -201,5 +212,6 @@ export function createPlaybackClock(): PlaybackClock {
         untilMs = options.untilMs;
       }
     },
+    dispose,
   };
 }

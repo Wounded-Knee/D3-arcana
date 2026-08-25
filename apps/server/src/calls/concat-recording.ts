@@ -5,7 +5,7 @@ import {
   FRAGMENT_CONTENT_TYPE,
   PLAYBACK_URL_TTL_SECONDS,
 } from "../storage/types.js";
-import { concatTimedWavs, pcmDurationMs, extractWavPcm } from "../storage/wav.js";
+import { concatTimedWavs, wavDurationMs } from "../storage/wav.js";
 
 export type RecordingMedia = {
   recordingId: string;
@@ -20,7 +20,7 @@ export function mediaObjectKey(
   fragmentCount: number,
   lastOffsetMs: number,
 ): string {
-  return `${sessionPrefix}/media/${fragmentCount}-${lastOffsetMs}.wav`;
+  return `${sessionPrefix}/media/${fragmentCount}-${lastOffsetMs}-mono.wav`;
 }
 
 export async function buildRecordingMedia(
@@ -66,7 +66,7 @@ export async function buildRecordingMedia(
     }
 
     const wav = concatTimedWavs(clips);
-    durationMs = pcmDurationMs(extractWavPcm(wav));
+    durationMs = wavDurationMs(wav);
     await store.put(key, wav, FRAGMENT_CONTENT_TYPE);
   }
 

@@ -1,4 +1,5 @@
 import {
+  AudioPresets,
   ConnectionState,
   Room,
   RoomEvent,
@@ -25,6 +26,16 @@ export class WebCallSession implements CallSession {
     const room = new Room({
       adaptiveStream: true,
       dynacast: true,
+      audioCaptureDefaults: {
+        echoCancellation: true,
+        noiseSuppression: false,
+        autoGainControl: true,
+        voiceIsolation: false,
+      },
+      publishDefaults: {
+        audioPreset: AudioPresets.musicHighQuality,
+        dtx: false,
+      },
     });
 
     room.on(RoomEvent.ParticipantConnected, () => {

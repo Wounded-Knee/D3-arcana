@@ -2,10 +2,7 @@ import type { IncomingMessage } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 
 import { PcmFragmentBuffer } from "../calls/pcm-fragment-buffer.js";
-import {
-  isSilentPcm,
-  silenceWatchForCall,
-} from "../calls/pcm-silence.js";
+import { isSilentPcm, silenceWatchForCall } from "../calls/pcm-silence.js";
 import { getCallById } from "../repositories/calls.js";
 import { persistPcmFragment } from "../calls/persist-fragment.js";
 import { getRecordingById } from "../repositories/recordings.js";

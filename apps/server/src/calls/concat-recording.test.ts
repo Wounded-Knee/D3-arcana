@@ -5,7 +5,7 @@ import { addConversationMember, createConversation } from "../repositories/conve
 import { insertStartingRecording } from "../repositories/recordings.js";
 import { createUser } from "../repositories/users.js";
 import { createTestObjectStore } from "../storage/object-store-instance.js";
-import { fragmentByteLength, pcmDurationMs, extractWavPcm } from "../storage/wav.js";
+import { fragmentByteLength, wavDurationMs } from "../storage/wav.js";
 import { persistPcmFragment } from "./persist-fragment.js";
 import { buildRecordingMedia, mediaObjectKey } from "./concat-recording.js";
 
@@ -46,7 +46,8 @@ describe("buildRecordingMedia", () => {
 
     const cached = await store.get(mediaObjectKey("alice-session", 2, 500));
     expect(cached).not.toBeNull();
-    expect(pcmDurationMs(extractWavPcm(cached!))).toBe(1000);
+    expect(cached!.readUInt16LE(22)).toBe(1);
+    expect(wavDurationMs(cached!)).toBe(1000);
 
     const again = await buildRecordingMedia(recording.id, call.id);
     expect(again?.playbackUrl).toBeTruthy();
