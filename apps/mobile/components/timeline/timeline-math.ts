@@ -69,3 +69,16 @@ export function clampViewStart(
   const maxStart = Math.max(0, durationMs - viewportMs * 0.15);
   return Math.min(maxStart, Math.max(0, viewStartMs));
 }
+
+export function followPlayheadViewStart(
+  viewStartMs: number,
+  playheadMs: number,
+  viewportMs: number,
+  durationMs: number,
+): number {
+  'worklet';
+  if (viewportMs <= 0 || playheadMs <= viewStartMs + viewportMs) {
+    return viewStartMs;
+  }
+  return clampViewStart(playheadMs - viewportMs, viewportMs, durationMs);
+}

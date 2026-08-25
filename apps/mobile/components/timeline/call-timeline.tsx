@@ -30,6 +30,7 @@ import {
   clampMsPerPixel,
   clampViewStart,
   DEFAULT_VIEWPORT_MS,
+  followPlayheadViewStart,
   OVERSCAN_PX,
 } from './timeline-math';
 import { panLog } from './timeline-debug';
@@ -285,6 +286,11 @@ export function CallTimeline({
       return;
     }
 
+    if (playingRef.current) {
+      contentShiftPx.value = nextShiftPx;
+      return;
+    }
+
     viewStartSv.value = viewStartMs;
     contentShiftPx.value = 0;
   }, [
@@ -369,12 +375,14 @@ export function CallTimeline({
         }
         if (safeJoinLiveAtMsRef.current !== null) {
           clockRef.current.pause();
+          playingRef.current = false;
           setPlaying(false);
           setCatchup('off');
           setRidingSinceMs(null);
           playheadSv.value = nextNow;
           setPlayheadMs(nextNow);
           setFollowLive(true);
+          contentShiftPx.value = 0;
           replayActiveRef.current?.(false);
           onSafeJoinConsumedRef.current?.();
         }
@@ -434,42 +442,95 @@ export function CallTimeline({
 
   const commitViewStart = useCallback((nextStart: number, immediate: boolean, reason: string) => {
     pendingViewStartRef.current = nextStart;
+    const quiet = reason === 'playhead';
     if (immediate) {
       if (viewCommitTimer.current) {
         clearTimeout(viewCommitTimer.current);
         viewCommitTimer.current = null;
       }
-      panLog('commit.immediate', {
-        reason,
-        nextStart: Math.round(nextStart),
-      });
+      if (!quiet) {
+        panLog('commit.immediate', {
+          reason,
+          nextStart: Math.round(nextStart),
+        });
+      }
       setViewStartMs(nextStart);
       return;
     }
 
     if (viewCommitTimer.current) {
-      panLog('commit.throttleSkip', {
-        reason,
-        nextStart: Math.round(nextStart),
-        pending: Math.round(pendingViewStartRef.current),
-      });
+      if (!quiet) {
+        panLog('commit.throttleSkip', {
+          reason,
+          nextStart: Math.round(nextStart),
+          pending: Math.round(pendingViewStartRef.current),
+        });
+      }
       return;
     }
 
-    panLog('commit.throttleSchedule', {
-      reason,
-      nextStart: Math.round(nextStart),
-      delayMs: VIEW_COMMIT_MS,
-    });
+    if (!quiet) {
+      panLog('commit.throttleSchedule', {
+        reason,
+        nextStart: Math.round(nextStart),
+        delayMs: VIEW_COMMIT_MS,
+      });
+    }
     viewCommitTimer.current = setTimeout(() => {
       viewCommitTimer.current = null;
-      panLog('commit.throttleFire', {
-        reason,
-        nextStart: Math.round(pendingViewStartRef.current),
-      });
+      if (!quiet) {
+        panLog('commit.throttleFire', {
+          reason,
+          nextStart: Math.round(pendingViewStartRef.current),
+        });
+      }
       setViewStartMs(pendingViewStartRef.current);
     }, VIEW_COMMIT_MS);
   }, []);
+
+  const applyPlayhead = useCallback((next: number) => {
+    playheadSv.value = next;
+    setPlayheadMs(next);
+    if (gesturingRef.current) {
+      return;
+    }
+
+    const pane = paneSizeSv.value;
+    const perPx = msPerPixelSv.value || 1;
+    if (pane <= 0) {
+      return;
+    }
+
+    const viewportMs = pane * perPx;
+    const currentStart = viewStartSv.value;
+    const nextStart = followPlayheadViewStart(
+      currentStart,
+      next,
+      viewportMs,
+      durationSv.value,
+    );
+    if (nextStart === currentStart) {
+      return;
+    }
+
+    viewStartSv.value = nextStart;
+    contentShiftPx.value = (committedViewStartSv.value - nextStart) / perPx;
+    commitViewStart(nextStart, false, 'playhead');
+  }, [
+    commitViewStart,
+    committedViewStartSv,
+    contentShiftPx,
+    durationSv,
+    msPerPixelSv,
+    paneSizeSv,
+    playheadSv,
+    viewStartSv,
+  ]);
+
+  const stopPlaybackView = useCallback(() => {
+    contentShiftPx.value = 0;
+    commitViewStart(viewStartSv.value, true, 'playback-stop');
+  }, [commitViewStart, contentShiftPx, viewStartSv]);
 
   const setGesturing = useCallback((value: boolean) => {
     gesturingRef.current = value;
@@ -645,7 +706,9 @@ export function CallTimeline({
     replayActiveRef.current?.(true);
     if (playingRef.current) {
       clockRef.current.pause();
+      playingRef.current = false;
       setPlaying(false);
+      stopPlaybackView();
     }
 
     if (hit) {
@@ -666,6 +729,7 @@ export function CallTimeline({
     onSelectAnnotation,
     onSelectionClear,
     playheadSv,
+    stopPlaybackView,
     tracks,
     viewStartSv,
     paneSizeSv,
@@ -1050,7 +1114,9 @@ export function CallTimeline({
   async function handlePlayPause() {
     if (playing) {
       clockRef.current.pause();
+      playingRef.current = false;
       setPlaying(false);
+      stopPlaybackView();
       return;
     }
 
@@ -1095,12 +1161,11 @@ export function CallTimeline({
       segments,
       soloUserId,
       playbackRate: 1,
-      onPlayhead: (next) => {
-        playheadSv.value = next;
-        setPlayheadMs(next);
-      },
+      onPlayhead: applyPlayhead,
       onEnded: () => {
+        playingRef.current = false;
         setPlaying(false);
+        stopPlaybackView();
       },
     });
   }
@@ -1132,25 +1197,26 @@ export function CallTimeline({
       segments,
       soloUserId,
       playbackRate: CATCHUP_RATE,
-      onPlayhead: (next) => {
-        playheadSv.value = next;
-        setPlayheadMs(next);
-      },
+      onPlayhead: applyPlayhead,
       onEnded: () => {
+        playingRef.current = false;
         setPlaying(false);
         setCatchup('off');
+        stopPlaybackView();
       },
     });
   }
 
   function handleJumpToLive() {
     clockRef.current.pause();
+    playingRef.current = false;
     setPlaying(false);
     setCatchup('off');
     setRidingSinceMs(null);
     playheadSv.value = nowMs;
     setPlayheadMs(nowMs);
     setFollowLive(true);
+    contentShiftPx.value = 0;
     replayActiveRef.current?.(false);
     onSafeJoinConsumed?.();
   }
