@@ -2,6 +2,10 @@ import {
   fileTimeSec,
   isAudibleAtPlayhead,
 } from './recording-seek';
+import {
+  isUpcomingSegment,
+  shouldSeekAudio,
+} from './playback-sync';
 import type { PlaybackClock, RecordingSegment } from './playback-types';
 
 const MAX_ELEMENTS = 16;
@@ -93,6 +97,26 @@ export function createPlaybackClock(): PlaybackClock {
   function sync(playheadMs: number): void {
     const audible = audibleSegments(playheadMs);
     const audibleIds = new Set(audible.map((item) => item.id));
+    const keepIds = new Set(audibleIds);
+
+    for (const segment of segments) {
+      if (
+        !segment.playbackUrl ||
+        (soloUserId && segment.userId !== soloUserId)
+      ) {
+        continue;
+      }
+      if (
+        isUpcomingSegment(
+          playheadMs,
+          segment.callOffsetMs,
+          segment.durationMs,
+        )
+      ) {
+        keepIds.add(segment.id);
+        elementFor(segment);
+      }
+    }
 
     for (const segment of segments) {
       if (!audibleIds.has(segment.id)) {
@@ -109,7 +133,7 @@ export function createPlaybackClock(): PlaybackClock {
       }
 
       const target = fileTimeSec(playheadMs, segment.callOffsetMs);
-      if (Math.abs(element.currentTime - target) > 0.25) {
+      if (shouldSeekAudio(element.currentTime, target, !element.paused)) {
         element.currentTime = Math.max(0, target);
       }
 
@@ -118,7 +142,7 @@ export function createPlaybackClock(): PlaybackClock {
       }
     }
 
-    evict(playheadMs, audibleIds);
+    evict(playheadMs, keepIds);
   }
 
   function tick(): void {

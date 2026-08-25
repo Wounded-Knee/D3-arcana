@@ -459,6 +459,7 @@ export interface CallListItem {
 
 export interface CallRecordingItem {
   id: string;
+  recordingId?: string;
   callId: string;
   userId: string;
   status: string;
@@ -511,5 +512,202 @@ export async function fetchCallRecordings(
   }>(
     token,
     `/api/v1/conversations/${conversationId}/calls/${callId}/recordings`,
+  );
+}
+
+export async function fetchRecordingMedia(
+  token: string,
+  conversationId: string,
+  callId: string,
+  recordingId: string,
+): Promise<{
+  recordingId: string;
+  userId: string;
+  callOffsetMs: number;
+  durationMs: number;
+  playbackUrl: string;
+}> {
+  return request(
+    token,
+    `/api/v1/conversations/${conversationId}/calls/${callId}/recordings/${recordingId}/media`,
+  );
+}
+
+export interface AnnotationProfile {
+  id: string;
+  key: string;
+  name: string;
+  color: string;
+  icon: string;
+  sortOrder: number;
+}
+
+export interface CallSelectionItem {
+  id: string;
+  callId: string;
+  conversationId: string;
+  createdBy: { id: string; displayName: string };
+  startOffsetMs: number;
+  endOffsetMs: number;
+  userId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CallAnnotationItem {
+  id: string;
+  callId: string;
+  conversationId: string;
+  createdBy: { id: string; displayName: string };
+  profile: AnnotationProfile;
+  note: string | null;
+  startOffsetMs: number;
+  endOffsetMs: number;
+  userId: string | null;
+  selectionId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function fetchAnnotationProfiles(
+  token: string,
+): Promise<AnnotationProfile[]> {
+  const body = await request<{ profiles: AnnotationProfile[] }>(
+    token,
+    '/api/v1/annotation-profiles',
+  );
+  return body.profiles;
+}
+
+export async function fetchCallSelections(
+  token: string,
+  conversationId: string,
+  callId: string,
+): Promise<CallSelectionItem[]> {
+  const body = await request<{ selections: CallSelectionItem[] }>(
+    token,
+    `/api/v1/conversations/${conversationId}/calls/${callId}/selections`,
+  );
+  return body.selections;
+}
+
+export async function createCallSelection(
+  token: string,
+  conversationId: string,
+  callId: string,
+  input: {
+    startOffsetMs: number;
+    endOffsetMs: number;
+    userId?: string | null;
+  },
+): Promise<CallSelectionItem> {
+  return request<CallSelectionItem>(
+    token,
+    `/api/v1/conversations/${conversationId}/calls/${callId}/selections`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function updateCallSelection(
+  token: string,
+  conversationId: string,
+  callId: string,
+  selectionId: string,
+  input: {
+    startOffsetMs?: number;
+    endOffsetMs?: number;
+    userId?: string | null;
+  },
+): Promise<CallSelectionItem> {
+  return request<CallSelectionItem>(
+    token,
+    `/api/v1/conversations/${conversationId}/calls/${callId}/selections/${selectionId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function deleteCallSelection(
+  token: string,
+  conversationId: string,
+  callId: string,
+  selectionId: string,
+): Promise<void> {
+  await request(
+    token,
+    `/api/v1/conversations/${conversationId}/calls/${callId}/selections/${selectionId}`,
+    { method: 'DELETE' },
+  );
+}
+
+export async function fetchCallAnnotations(
+  token: string,
+  conversationId: string,
+  callId: string,
+): Promise<CallAnnotationItem[]> {
+  const body = await request<{ annotations: CallAnnotationItem[] }>(
+    token,
+    `/api/v1/conversations/${conversationId}/calls/${callId}/annotations`,
+  );
+  return body.annotations;
+}
+
+export async function createCallAnnotation(
+  token: string,
+  conversationId: string,
+  callId: string,
+  input: {
+    profileId: string;
+    selectionId?: string | null;
+    startOffsetMs?: number;
+    endOffsetMs?: number;
+    userId?: string | null;
+  },
+): Promise<CallAnnotationItem> {
+  return request<CallAnnotationItem>(
+    token,
+    `/api/v1/conversations/${conversationId}/calls/${callId}/annotations`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function updateCallAnnotation(
+  token: string,
+  conversationId: string,
+  callId: string,
+  annotationId: string,
+  input: {
+    note?: string | null;
+    selectionId?: string | null;
+  },
+): Promise<CallAnnotationItem> {
+  return request<CallAnnotationItem>(
+    token,
+    `/api/v1/conversations/${conversationId}/calls/${callId}/annotations/${annotationId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    },
+  );
+}
+
+export async function deleteCallAnnotation(
+  token: string,
+  conversationId: string,
+  callId: string,
+  annotationId: string,
+): Promise<void> {
+  await request(
+    token,
+    `/api/v1/conversations/${conversationId}/calls/${callId}/annotations/${annotationId}`,
+    { method: 'DELETE' },
   );
 }

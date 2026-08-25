@@ -57,6 +57,13 @@
       "when": 1786843841370,
       "tag": "0007_common_veda",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787527371929,
+      "tag": "0008_smiling_namorita",
+      "breakpoints": true
     }
   ]
 }

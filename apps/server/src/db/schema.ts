@@ -376,3 +376,111 @@ import {
       ),
     ],
   );
+
+  export const annotationProfiles = pgTable("annotation_profiles", {
+    id: uuid("id").defaultRandom().primaryKey(),
+    key: text("key").notNull(),
+    name: text("name").notNull(),
+    color: text("color").notNull(),
+    icon: text("icon").notNull(),
+    sortOrder: integer("sort_order").notNull(),
+  }, (table) => [
+    uniqueIndex("annotation_profiles_key_idx").on(table.key),
+  ]);
+
+  export const callSelections = pgTable(
+    "call_selections",
+    {
+      id: uuid("id").defaultRandom().primaryKey(),
+
+      callId: uuid("call_id")
+        .notNull()
+        .references(() => calls.id, {
+          onDelete: "cascade",
+        }),
+
+      conversationId: uuid("conversation_id")
+        .notNull()
+        .references(() => conversations.id, {
+          onDelete: "cascade",
+        }),
+
+      createdBy: uuid("created_by")
+        .notNull()
+        .references(() => users.id),
+
+      startOffsetMs: integer("start_offset_ms").notNull(),
+
+      endOffsetMs: integer("end_offset_ms").notNull(),
+
+      userId: uuid("user_id").references(() => users.id),
+
+      createdAt: timestamp("created_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+
+      updatedAt: timestamp("updated_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+    },
+    (table) => [
+      index("call_selections_call_offset_idx").on(
+        table.callId,
+        table.startOffsetMs,
+      ),
+    ],
+  );
+
+  export const callAnnotations = pgTable(
+    "call_annotations",
+    {
+      id: uuid("id").defaultRandom().primaryKey(),
+
+      callId: uuid("call_id")
+        .notNull()
+        .references(() => calls.id, {
+          onDelete: "cascade",
+        }),
+
+      conversationId: uuid("conversation_id")
+        .notNull()
+        .references(() => conversations.id, {
+          onDelete: "cascade",
+        }),
+
+      createdBy: uuid("created_by")
+        .notNull()
+        .references(() => users.id),
+
+      profileId: uuid("profile_id")
+        .notNull()
+        .references(() => annotationProfiles.id),
+
+      note: text("note"),
+
+      startOffsetMs: integer("start_offset_ms").notNull(),
+
+      endOffsetMs: integer("end_offset_ms").notNull(),
+
+      userId: uuid("user_id").references(() => users.id),
+
+      selectionId: uuid("selection_id").references(() => callSelections.id, {
+        onDelete: "set null",
+      }),
+
+      createdAt: timestamp("created_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+
+      updatedAt: timestamp("updated_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+    },
+    (table) => [
+      uniqueIndex("call_annotations_selection_id_idx").on(table.selectionId),
+      index("call_annotations_call_offset_idx").on(
+        table.callId,
+        table.startOffsetMs,
+      ),
+    ],
+  );

@@ -1,4 +1,5 @@
 import { eventBus } from "../events/event-bus-instance.js";
+import { createAnnotationEventsWebSocketHandler } from "./annotation-events-websocket.js";
 import { createCallEventsWebSocketHandler } from "./call-events-websocket.js";
 import { createMessageCreatedWebSocketHandler } from "./message-created-websocket.js";
 import { handleMessageCreated } from "./message-created.js";
@@ -48,5 +49,33 @@ export function registerConsumers(
   eventBus.subscribe(
     "call.recording.restored",
     callHandlers.handleCallRecordingRestored,
+  );
+
+  const annotationHandlers = createAnnotationEventsWebSocketHandler(
+    webSocketManager,
+  );
+  eventBus.subscribe(
+    "annotation.created",
+    annotationHandlers.handleAnnotationCreated,
+  );
+  eventBus.subscribe(
+    "annotation.updated",
+    annotationHandlers.handleAnnotationUpdated,
+  );
+  eventBus.subscribe(
+    "annotation.deleted",
+    annotationHandlers.handleAnnotationDeleted,
+  );
+  eventBus.subscribe(
+    "selection.created",
+    annotationHandlers.handleSelectionCreated,
+  );
+  eventBus.subscribe(
+    "selection.updated",
+    annotationHandlers.handleSelectionUpdated,
+  );
+  eventBus.subscribe(
+    "selection.deleted",
+    annotationHandlers.handleSelectionDeleted,
   );
 }

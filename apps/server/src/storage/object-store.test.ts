@@ -43,5 +43,8 @@ describe("object store keys and in-memory adapter", () => {
     expect(store.puts).toEqual([
       { key: "clip.wav", body, contentType: "audio/wav" },
     ]);
+    expect(await store.exists("clip.wav")).toBe(true);
+    expect(await store.get("clip.wav")).toEqual(body);
+    expect(await store.get("missing.wav")).toBeNull();
   });
 });

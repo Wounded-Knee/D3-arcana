@@ -11,4 +11,5 @@ The platform is designed to create constructive disruption in the natural flow o
 - [Stage One: Client Integration](blog/20260813.0.ClientIntegration.md)
 - [Stage One: Media Transport](blog/20260814.0.MediaTransport.md)
 - [Stage One: Call Recording](blog/20260816.0.CallRecording.md)
+- [Stage One: Timeline Annotations](blog/20260824.0.TimelineAnnotations.md)
 

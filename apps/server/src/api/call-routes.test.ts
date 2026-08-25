@@ -337,6 +337,63 @@ describe("call recordings http", () => {
     expect(response.body.recordings[0].playbackUrl).toContain("alice-session%2F0.wav");
     expect(response.body.recordings[0].callOffsetMs).toBe(0);
     expect(response.body.recordings[0].durationMs).toBe(500);
+    expect(response.body.recordings[0].recordingId).toBe(recording.id);
+  });
+
+  it("returns a concatenated session media URL", async () => {
+    const { alice, conversation, app } = await seedMembers();
+    const joinResponse = await request(app)
+      .post(`/api/v1/conversations/${conversation.id}/calls/join`)
+      .set("Authorization", "Bearer test-alice")
+      .send({})
+      .expect(201);
+    const callId = joinResponse.body.callId as string;
+
+    const { persistPcmFragment } = await import("../calls/persist-fragment.js");
+    const {
+      insertStartingRecording,
+      markRecordingActive,
+    } = await import("../repositories/recordings.js");
+    const { fragmentByteLength } = await import("../storage/wav.js");
+    const { createTestObjectStore } = await import(
+      "../storage/object-store-instance.js"
+    );
+    createTestObjectStore();
+
+    const recording = await insertStartingRecording({
+      id: "00000000-0000-4000-8000-000000000411",
+      callId,
+      conversationId: conversation.id,
+      userId: alice.id,
+      callOffsetMs: 0,
+      objectKey: "alice-session-media",
+      providerTrackSid: "TR_alice_media",
+    });
+    await markRecordingActive(recording.id, "EG_media", alice.id, {
+      type: "call.recording.started",
+      payload: {
+        callId,
+        userId: alice.id,
+        recordingId: recording.id,
+        objectKey: "alice-session-media",
+        callOffsetMs: 0,
+      },
+    });
+    const pcm = Buffer.alloc(fragmentByteLength(500), 3);
+    await persistPcmFragment({ recording, pcm, callOffsetMs: 0 });
+    await persistPcmFragment({ recording, pcm, callOffsetMs: 500 });
+
+    const response = await request(app)
+      .get(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/recordings/${recording.id}/media`,
+      )
+      .set("Authorization", "Bearer test-alice")
+      .expect(200);
+
+    expect(response.body.recordingId).toBe(recording.id);
+    expect(response.body.durationMs).toBe(1000);
+    expect(response.body.callOffsetMs).toBe(0);
+    expect(response.body.playbackUrl).toContain("alice-session-media");
   });
 });
 

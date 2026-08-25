@@ -38,6 +38,12 @@ export class ForbiddenError extends HttpError {
   }
 }
 
+export class ConflictError extends HttpError {
+  constructor(message: string) {
+    super(409, message, "conflict");
+  }
+}
+
 export function asyncHandler(
   fn: (req: Request, res: Response, next: NextFunction) => Promise<void>,
 ): RequestHandler {
