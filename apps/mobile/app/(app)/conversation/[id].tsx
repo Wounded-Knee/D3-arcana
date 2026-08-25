@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Redirect, useLocalSearchParams, type Href } from 'expo-router';
+import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
@@ -793,7 +793,7 @@ export default function ConversationScreen() {
   }
 
   if (!user || !token) {
-    return <Redirect href={'/login' as Href} />;
+    return null;
   }
 
   const composerPaddingBottom = Math.max(insets.bottom, 12);
@@ -1054,7 +1054,7 @@ export default function ConversationScreen() {
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + 44 : 0}>
+      keyboardVerticalOffset={0}>
       {showCallBar ? (
         callStartedAt ? (
           <CallTimeline

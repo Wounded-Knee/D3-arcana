@@ -7,7 +7,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { Link, Redirect, type Href } from 'expo-router';
+import { Link, type Href } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
@@ -17,7 +17,7 @@ import {
 } from '@/lib/api';
 
 export default function ConversationsScreen() {
-  const { user, token, signOut, realtime } = useAuth();
+  const { user, token, realtime } = useAuth();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeCalls, setActiveCalls] = useState<Set<string>>(() => new Set());
   const [isLoading, setIsLoading] = useState(true);
@@ -73,19 +73,14 @@ export default function ConversationsScreen() {
   }, [realtime]);
 
   if (!user || !token) {
-    return <Redirect href={'/login' as Href} />;
+    return null;
   }
 
   return (
-    <SafeAreaView style={styles.container} edges={['top', 'left', 'right', 'bottom']}>
+    <SafeAreaView style={styles.container} edges={['left', 'right', 'bottom']}>
       <View style={styles.header}>
-        <View>
-          <Text style={styles.title}>Conversations</Text>
-          <Text style={styles.subtitle}>Signed in as {user.displayName}</Text>
-        </View>
-        <Pressable onPress={signOut}>
-          <Text style={styles.signOut}>Sign out</Text>
-        </Pressable>
+        <Text style={styles.title}>Conversations</Text>
+        <Text style={styles.subtitle}>Signed in as {user.displayName}</Text>
       </View>
 
       {isLoading ? (
@@ -127,9 +122,6 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: 20,
     paddingBottom: 16,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
   },
   title: {
     fontSize: 28,
@@ -139,10 +131,6 @@ const styles = StyleSheet.create({
   subtitle: {
     color: '#94a3b8',
     marginTop: 4,
-  },
-  signOut: {
-    color: '#60a5fa',
-    fontWeight: '600',
   },
   list: {
     paddingHorizontal: 20,

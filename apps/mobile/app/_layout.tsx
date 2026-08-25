@@ -13,7 +13,7 @@ import { AuthProvider } from '@/context/auth';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export const unstable_settings = {
-  anchor: '(tabs)',
+  anchor: '(app)',
 };
 
 function RootNavigator() {
@@ -24,11 +24,7 @@ function RootNavigator() {
       <Stack>
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen
-          name="conversation/[id]"
-          options={{ title: 'Conversation' }}
-        />
+        <Stack.Screen name="(app)" options={{ headerShown: false }} />
         <Stack.Screen name="timeline-test" options={{ title: 'Timeline Test' }} />
       </Stack>
       <StatusBar style="auto" />

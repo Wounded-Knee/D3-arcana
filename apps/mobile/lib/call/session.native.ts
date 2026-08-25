@@ -1,3 +1,4 @@
+import './setup';
 import { Platform } from 'react-native';
 import {
   ConnectionState,
