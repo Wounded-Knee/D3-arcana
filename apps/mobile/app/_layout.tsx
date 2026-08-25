@@ -10,6 +10,7 @@ import '@/lib/call/setup';
 
 import { ServiceStatusBanner } from '@/components/service-status-banner';
 import { AuthProvider } from '@/context/auth';
+import { PreferencesProvider } from '@/context/preferences';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 export const unstable_settings = {
@@ -46,12 +47,14 @@ export default function RootLayout() {
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
         <AuthProvider>
-          <View style={styles.root}>
-            <ServiceStatusBanner />
-            <View style={styles.navigator}>
-              <RootNavigator />
+          <PreferencesProvider>
+            <View style={styles.root}>
+              <ServiceStatusBanner />
+              <View style={styles.navigator}>
+                <RootNavigator />
+              </View>
             </View>
-          </View>
+          </PreferencesProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

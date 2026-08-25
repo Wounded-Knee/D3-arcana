@@ -77,6 +77,18 @@ import {
       withTimezone: true,
     }).defaultNow().notNull(),
   });
+
+  export const userPreferences = pgTable("user_preferences", {
+    userId: uuid("user_id")
+      .primaryKey()
+      .references(() => users.id, {
+        onDelete: "cascade",
+      }),
+    timelineOrientation: text("timeline_orientation").notNull().default("horizontal"),
+    updatedAt: timestamp("updated_at", {
+      withTimezone: true,
+    }).defaultNow().notNull(),
+  });
   
   export const conversations = pgTable("conversations", {
     id: uuid("id").defaultRandom().primaryKey(),

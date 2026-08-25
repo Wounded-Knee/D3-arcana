@@ -64,6 +64,13 @@
       "when": 1787527371929,
       "tag": "0008_smiling_namorita",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787624468977,
+      "tag": "0009_brave_lenny_balinger",
+      "breakpoints": true
     }
   ]
 }

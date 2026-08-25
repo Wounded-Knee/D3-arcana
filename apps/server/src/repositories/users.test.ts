@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createUser, getUserById } from "./users.js";
+import { createUser, getUserById, getUserPreferences, upsertUserPreferences } from "./users.js";
 
 describe("users repository", () => {
   it("creates and retrieves a user by id", async () => {
@@ -21,5 +21,28 @@ describe("users repository", () => {
     );
 
     expect(user).toBeNull();
+  });
+
+  it("defaults and persists timeline orientation per user", async () => {
+    const alice = await createUser("Alice");
+    const bob = await createUser("Bob");
+
+    await expect(getUserPreferences(alice.id)).resolves.toEqual({
+      timelineOrientation: "horizontal",
+      updatedAt: null,
+    });
+
+    const saved = await upsertUserPreferences(alice.id, {
+      timelineOrientation: "vertical",
+    });
+    expect(saved.timelineOrientation).toBe("vertical");
+    expect(saved.updatedAt).toBeInstanceOf(Date);
+
+    await expect(getUserPreferences(alice.id)).resolves.toMatchObject({
+      timelineOrientation: "vertical",
+    });
+    await expect(getUserPreferences(bob.id)).resolves.toMatchObject({
+      timelineOrientation: "horizontal",
+    });
   });
 });

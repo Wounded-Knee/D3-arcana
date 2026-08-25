@@ -4,6 +4,10 @@ export const createUserSchema = z.object({
   displayName: z.string().trim().min(1).max(100),
 });
 
+export const updateUserPreferencesSchema = z.object({
+  timelineOrientation: z.enum(["horizontal", "vertical"]),
+});
+
 export const createConversationSchema = z.object({
   name: z.string().trim().min(1).max(200),
 });

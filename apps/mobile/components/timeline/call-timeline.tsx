@@ -13,13 +13,23 @@ import { createPlaybackClock } from '@/lib/call/playback-clock';
 import { withLiveTail } from '@/lib/call/playback-sync';
 import type { RecordingSegment } from '@/lib/call/playback-types';
 import { AnnotationMarkers } from './annotation-markers';
-import { ParticipantTrack, TRACK_HEIGHT } from './participant-track';
+import { ParticipantTrack } from './participant-track';
 import { ProfilePickerButton } from './profile-picker';
+import {
+  LABEL_HEIGHT,
+  LABEL_WIDTH,
+  RULER_GUTTER,
+  RULER_HEIGHT,
+  TRACK_HEIGHT,
+  TRACK_WIDTH,
+  paneSizePx,
+  timeGutterPx,
+  type TimelineOrientation,
+} from './timeline-layout';
 import {
   clampMsPerPixel,
   clampViewStart,
   DEFAULT_VIEWPORT_MS,
-  LABEL_WIDTH,
   OVERSCAN_PX,
 } from './timeline-math';
 import { panLog } from './timeline-debug';
@@ -33,8 +43,6 @@ import type {
 import { snapSelectionEdges, SELECTION_MIN_WIDTH_MS } from './timeline-snap';
 import { TimelineRuler } from './timeline-ruler';
 
-const RULER_HEIGHT = 22;
-
 const MAX_TRACKS_VISIBLE = 4;
 const LIVE_EDGE_MS = 400;
 const VIEW_COMMIT_MS = 32;
@@ -47,6 +55,8 @@ type CallTimelineProps = {
   endedAt?: string | null;
   tracks: TimelineTrack[];
   header: ReactNode;
+  inspect?: ReactNode;
+  orientation?: TimelineOrientation;
   recordings?: RecordingSegment[];
   live?: boolean;
   onReplayActiveChange?: (active: boolean) => void;
@@ -78,6 +88,8 @@ export function CallTimeline({
   endedAt,
   tracks,
   header,
+  inspect,
+  orientation = 'horizontal',
   recordings = [],
   live = true,
   onReplayActiveChange,
@@ -101,6 +113,11 @@ export function CallTimeline({
       : null;
 
   const [width, setWidth] = useState(0);
+  const [height, setHeight] = useState(0);
+  const vertical = orientation === 'vertical';
+  const timeGutter = timeGutterPx(orientation);
+  const rulerCross = vertical ? RULER_GUTTER : RULER_HEIGHT;
+  const trackBreadth = vertical ? TRACK_WIDTH : TRACK_HEIGHT;
   const [nowMs, setNowMs] = useState(() =>
     frozenDurationMs ?? Math.max(0, Date.now() - startedAtMs),
   );
@@ -135,7 +152,9 @@ export function CallTimeline({
   const msPerPixelSv = useSharedValue(30);
   const playheadSv = useSharedValue(0);
   const durationSv = useSharedValue(DEFAULT_VIEWPORT_MS);
-  const waveformWidthSv = useSharedValue(0);
+  const paneSizeSv = useSharedValue(0);
+  const isVerticalSv = useSharedValue(vertical ? 1 : 0);
+  const timeGutterSv = useSharedValue(timeGutter);
   const nowSv = useSharedValue(0);
   const liveSv = useSharedValue(live ? 1 : 0);
   const followLiveSv = useSharedValue(live ? 1 : 0);
@@ -163,10 +182,10 @@ export function CallTimeline({
   const pinchOriginSv = useSharedValue({
     viewStartMs: 0,
     msPerPixel: 30,
-    focalX: 0,
+    focal: 0,
   });
 
-  const waveformWidth = Math.max(0, width - LABEL_WIDTH);
+  const paneSize = paneSizePx(orientation, width, height);
   const durationMs = Math.max(
     frozenDurationMs ?? nowMs,
     DEFAULT_VIEWPORT_MS,
@@ -185,11 +204,16 @@ export function CallTimeline({
   const safeJoinLiveAtMsRef = useRef(safeJoinLiveAtMs);
   safeJoinLiveAtMsRef.current = safeJoinLiveAtMs;
   const canPlay = readySegments.length > 0;
-  const overscanPx = Math.max(waveformWidth, OVERSCAN_PX);
+  const overscanPx = Math.max(paneSize, OVERSCAN_PX);
 
   useEffect(() => {
-    waveformWidthSv.value = waveformWidth;
-  }, [waveformWidth, waveformWidthSv]);
+    paneSizeSv.value = paneSize;
+  }, [paneSize, paneSizeSv]);
+
+  useEffect(() => {
+    isVerticalSv.value = vertical ? 1 : 0;
+    timeGutterSv.value = timeGutter;
+  }, [isVerticalSv, timeGutter, timeGutterSv, vertical]);
 
   useEffect(() => {
     durationSv.value = durationMs;
@@ -227,7 +251,11 @@ export function CallTimeline({
       endMs: selection.endMs,
       trackIndex:
         selection.scope.kind === 'channel'
-          ? tracks.findIndex((track) => track.userId === selection.scope.userId)
+          ? tracks.findIndex(
+              (track) =>
+                selection.scope.kind === 'channel' &&
+                track.userId === selection.scope.userId,
+            )
           : -1,
     };
   }, [lastSelectionSv, selection, tracks]);
@@ -268,14 +296,34 @@ export function CallTimeline({
   ]);
 
   useEffect(() => {
-    if (waveformWidth <= 0) {
+    if (paneSize <= 0) {
       return;
     }
 
-    setMsPerPixel((current) =>
-      clampMsPerPixel(current, waveformWidth, durationMs),
+    setMsPerPixel((current) => clampMsPerPixel(current, paneSize, durationMs));
+  }, [durationMs, paneSize]);
+
+  useEffect(() => {
+    if (
+      paneSize <= 0 ||
+      !followLiveRef.current ||
+      !live ||
+      frozenDurationMs !== null
+    ) {
+      return;
+    }
+
+    const nextMsPerPixel = clampMsPerPixel(msPerPixel, paneSize, durationMs);
+    const viewportMs = paneSize * nextMsPerPixel;
+    const liveNow = Math.max(0, Date.now() - startedAtMs);
+    const nextStart = clampViewStart(
+      liveNow - viewportMs,
+      viewportMs,
+      liveNow,
     );
-  }, [durationMs, waveformWidth]);
+    viewStartSv.value = nextStart;
+    setViewStartMs(nextStart);
+  }, [frozenDurationMs, live, msPerPixel, orientation, paneSize, startedAtMs, viewStartSv]);
 
   useEffect(() => {
     if (!live || frozenDurationMs !== null) {
@@ -292,7 +340,7 @@ export function CallTimeline({
           setNowMs: true,
           skippedViewFollow:
             !followLiveRef.current ||
-            waveformWidth <= 0 ||
+            paneSize <= 0 ||
             playingRef.current,
           nowMs: Math.round(nextNow),
         });
@@ -333,7 +381,7 @@ export function CallTimeline({
         return;
       }
 
-      const paneWidth = waveformWidthSv.value;
+      const paneWidth = paneSizeSv.value;
       if (
         gesturingRef.current ||
         !followLiveRef.current ||
@@ -554,12 +602,18 @@ export function CallTimeline({
   );
 
   const handleTapSeek = useCallback((x: number, y: number) => {
-    if (waveformWidthSv.value <= 0 || x < LABEL_WIDTH) {
+    if (paneSizeSv.value <= 0) {
+      return;
+    }
+
+    const along = vertical ? y : x;
+    const across = vertical ? x : y;
+    if (along < timeGutter) {
       return;
     }
 
     const atMs =
-      viewStartSv.value + (x - LABEL_WIDTH) * msPerPixelSv.value;
+      viewStartSv.value + (along - timeGutter) * msPerPixelSv.value;
     const hit = annotations.find((annotation) => {
       const isPoint = annotation.endMs <= annotation.startMs;
       const pad = isPoint ? 400 : 0;
@@ -569,16 +623,17 @@ export function CallTimeline({
         return false;
       }
       if (annotation.scope.kind === 'all') {
-        return y <= RULER_HEIGHT + TRACK_HEIGHT * tracks.length;
+        return across <= rulerCross + trackBreadth * tracks.length;
       }
+      const channelUserId = annotation.scope.userId;
       const index = tracks.findIndex(
-        (track) => track.userId === annotation.scope.userId,
+        (track) => track.userId === channelUserId,
       );
       if (index < 0) {
         return false;
       }
-      const top = RULER_HEIGHT + index * TRACK_HEIGHT;
-      return y >= top && y <= top + TRACK_HEIGHT;
+      const startAcross = rulerCross + index * trackBreadth;
+      return across >= startAcross && across <= startAcross + trackBreadth;
     });
     const nextPlayhead = Math.max(
       0,
@@ -613,7 +668,11 @@ export function CallTimeline({
     playheadSv,
     tracks,
     viewStartSv,
-    waveformWidthSv,
+    paneSizeSv,
+    rulerCross,
+    timeGutter,
+    trackBreadth,
+    vertical,
   ]);
 
   const handlePanSample = useCallback(
@@ -640,45 +699,49 @@ export function CallTimeline({
   }, []);
 
   const pan = useMemo(
-    () =>
-      Gesture.Pan()
-        .activeOffsetX([-8, 8])
+    () => {
+      const gesture = vertical
+        ? Gesture.Pan().activeOffsetY([-8, 8])
+        : Gesture.Pan().activeOffsetX([-8, 8]);
+      return gesture
         .onBegin((event) => {
           runOnJS(setGesturing)(true);
           panSampleSv.value = 0;
           const last = lastSelectionSv.value;
           const perPx = msPerPixelSv.value || 1;
-          const leftX =
-            LABEL_WIDTH + (last.startMs - viewStartSv.value) / perPx;
-          const rightX =
-            LABEL_WIDTH + (last.endMs - viewStartSv.value) / perPx;
-          const handleTop =
+          const alongStart =
+            timeGutter + (last.startMs - viewStartSv.value) / perPx;
+          const alongEnd =
+            timeGutter + (last.endMs - viewStartSv.value) / perPx;
+          const handleCrossStart =
             last.trackIndex >= 0
-              ? RULER_HEIGHT + last.trackIndex * TRACK_HEIGHT
+              ? rulerCross + last.trackIndex * trackBreadth
               : 0;
-          const handleBottom =
+          const handleCrossEnd =
             last.trackIndex >= 0
-              ? handleTop + TRACK_HEIGHT
-              : RULER_HEIGHT + MAX_TRACKS_VISIBLE * TRACK_HEIGHT;
-          const onHandleY =
+              ? handleCrossStart + trackBreadth
+              : rulerCross + MAX_TRACKS_VISIBLE * trackBreadth;
+          const along = vertical ? event.y : event.x;
+          const across = vertical ? event.x : event.y;
+          const onHandleCross =
             last.startMs >= 0 &&
-            event.y >= handleTop &&
-            event.y <= handleBottom;
+            across >= handleCrossStart &&
+            across <= handleCrossEnd;
           let mode = 0;
-          if (onHandleY && last.startMs >= 0) {
-            if (Math.abs(event.x - leftX) <= HANDLE_HIT_PX) {
+          if (onHandleCross && last.startMs >= 0) {
+            if (Math.abs(along - alongStart) <= HANDLE_HIT_PX) {
               mode = 2;
-            } else if (Math.abs(event.x - rightX) <= HANDLE_HIT_PX) {
+            } else if (Math.abs(along - alongEnd) <= HANDLE_HIT_PX) {
               mode = 3;
             }
           }
           let trackIndex = last.trackIndex;
           if (mode === 0 && selectingSv.value) {
             mode = 1;
-            if (event.y < RULER_HEIGHT) {
+            if (across < rulerCross) {
               trackIndex = -1;
             } else {
-              trackIndex = Math.floor((event.y - RULER_HEIGHT) / TRACK_HEIGHT);
+              trackIndex = Math.floor((across - rulerCross) / trackBreadth);
             }
           }
           panOriginSv.value = {
@@ -693,22 +756,25 @@ export function CallTimeline({
         })
         .onUpdate((event) => {
           const origin = panOriginSv.value;
-          const paneWidth = waveformWidthSv.value;
-          if (paneWidth <= 0) {
+          const pane = paneSizeSv.value;
+          if (pane <= 0) {
             return;
           }
+
+          const along = vertical ? event.y : event.x;
+          const translation = vertical ? event.translationY : event.translationX;
 
           if (origin.mode === 1 || origin.mode === 2 || origin.mode === 3) {
             const atMs =
               origin.viewStartMs +
-              Math.max(0, event.x - LABEL_WIDTH) * origin.msPerPixel;
+              Math.max(0, along - timeGutter) * origin.msPerPixel;
             let nextStartMs = origin.startMs;
             let nextEndMs = origin.endMs;
             if (origin.mode === 1) {
               const fromMs =
                 origin.viewStartMs +
-                Math.max(0, event.x - LABEL_WIDTH) * origin.msPerPixel -
-                event.translationX * origin.msPerPixel;
+                Math.max(0, along - timeGutter) * origin.msPerPixel -
+                translation * origin.msPerPixel;
               const left = Math.max(0, Math.min(fromMs, atMs));
               const right = Math.min(durationSv.value, Math.max(fromMs, atMs));
               nextStartMs = left;
@@ -747,9 +813,9 @@ export function CallTimeline({
             return;
           }
 
-          const viewportMs = paneWidth * origin.msPerPixel;
+          const viewportMs = pane * origin.msPerPixel;
           const nextStart = clampViewStart(
-            origin.viewStartMs - event.translationX * origin.msPerPixel,
+            origin.viewStartMs - translation * origin.msPerPixel,
             viewportMs,
             durationSv.value,
           );
@@ -760,7 +826,7 @@ export function CallTimeline({
           panSampleSv.value += 1;
           if (panSampleSv.value % 12 === 0) {
             runOnJS(handlePanSample)(
-              event.translationX,
+              translation,
               nextStart,
               committedViewStartSv.value,
               shiftPx,
@@ -789,15 +855,16 @@ export function CallTimeline({
             );
             return;
           }
-          const paneWidth = waveformWidthSv.value;
+          const pane = paneSizeSv.value;
           const perPx = msPerPixelSv.value || 1;
-          const viewportMs = paneWidth * perPx;
+          const viewportMs = pane * perPx;
           const nextStart = viewStartSv.value;
           const nextFollow =
             liveSv.value === 1 &&
             nextStart + viewportMs >= nowSv.value - LIVE_EDGE_MS;
           runOnJS(handlePanEnd)(nextStart, nextFollow);
-        }),
+        });
+    },
     [
       committedViewStartSv,
       contentShiftPx,
@@ -814,10 +881,14 @@ export function CallTimeline({
       nowSv,
       panOriginSv,
       panSampleSv,
+      rulerCross,
       selectingSv,
       setGesturing,
+      timeGutter,
+      trackBreadth,
+      vertical,
       viewStartSv,
-      waveformWidthSv,
+      paneSizeSv,
     ],
   );
 
@@ -826,28 +897,29 @@ export function CallTimeline({
       Gesture.Pinch()
         .onBegin((event) => {
           runOnJS(setGesturing)(true);
+          const focalAlong = vertical ? event.focalY : event.focalX;
           pinchOriginSv.value = {
             viewStartMs: viewStartSv.value,
             msPerPixel: msPerPixelSv.value,
-            focalX: Math.max(0, event.focalX - LABEL_WIDTH),
+            focal: Math.max(0, focalAlong - timeGutter),
           };
         })
         .onUpdate((event) => {
-          const paneWidth = waveformWidthSv.value;
-          if (paneWidth <= 0 || event.scale <= 0) {
+          const pane = paneSizeSv.value;
+          if (pane <= 0 || event.scale <= 0) {
             return;
           }
 
           const origin = pinchOriginSv.value;
           const nextMsPerPixel = clampMsPerPixel(
             origin.msPerPixel / event.scale,
-            paneWidth,
+            pane,
             durationSv.value,
           );
-          const focalTime = origin.viewStartMs + origin.focalX * origin.msPerPixel;
-          const viewportMs = paneWidth * nextMsPerPixel;
+          const focalTime = origin.viewStartMs + origin.focal * origin.msPerPixel;
+          const viewportMs = pane * nextMsPerPixel;
           const nextStart = clampViewStart(
-            focalTime - origin.focalX * nextMsPerPixel,
+            focalTime - origin.focal * nextMsPerPixel,
             viewportMs,
             durationSv.value,
           );
@@ -866,8 +938,10 @@ export function CallTimeline({
       setGesturing,
       msPerPixelSv,
       pinchOriginSv,
+      timeGutter,
+      vertical,
       viewStartSv,
-      waveformWidthSv,
+      paneSizeSv,
     ],
   );
 
@@ -886,51 +960,80 @@ export function CallTimeline({
   );
 
   const waveformShiftStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: contentShiftPx.value }],
+    transform:
+      isVerticalSv.value === 1
+        ? [{ translateY: contentShiftPx.value }]
+        : [{ translateX: contentShiftPx.value }],
   }));
 
   const playheadStyle = useAnimatedStyle(() => {
     const perPx = msPerPixelSv.value || 1;
-    const paneWidth = waveformWidthSv.value;
-    const rawX = LABEL_WIDTH + (playheadSv.value - viewStartSv.value) / perPx;
-    const maxX = LABEL_WIDTH + paneWidth;
-    const pastRight = rawX > maxX;
-    const x = pastRight ? maxX : rawX;
-    const visible = pastRight || (x >= LABEL_WIDTH - 1 && x <= maxX + 1);
+    const pane = paneSizeSv.value;
+    const gutter = timeGutterSv.value;
+    const raw = gutter + (playheadSv.value - viewStartSv.value) / perPx;
+    const maxAlong = gutter + pane;
+    const pastEnd = raw > maxAlong;
+    const along = pastEnd ? maxAlong : raw;
+    const visible = pastEnd || (along >= gutter - 1 && along <= maxAlong + 1);
     return {
       opacity: visible ? 1 : 0,
-      transform: [{ translateX: x }],
+      transform:
+        isVerticalSv.value === 1
+          ? [{ translateY: along }]
+          : [{ translateX: along }],
     };
   });
 
   const liveEdgeStyle = useAnimatedStyle(() => {
     const perPx = msPerPixelSv.value || 1;
-    const paneWidth = waveformWidthSv.value;
-    const rawX = LABEL_WIDTH + (nowSv.value - viewStartSv.value) / perPx;
-    const maxX = LABEL_WIDTH + paneWidth;
-    const pastRight = rawX > maxX;
-    const x = pastRight ? maxX : rawX;
-    const visible = pastRight || (x >= LABEL_WIDTH - 1 && x <= maxX + 1);
+    const pane = paneSizeSv.value;
+    const gutter = timeGutterSv.value;
+    const raw = gutter + (nowSv.value - viewStartSv.value) / perPx;
+    const maxAlong = gutter + pane;
+    const pastEnd = raw > maxAlong;
+    const along = pastEnd ? maxAlong : raw;
+    const visible = pastEnd || (along >= gutter - 1 && along <= maxAlong + 1);
     return {
       opacity: visible ? 1 : 0,
-      transform: [{ translateX: x }],
+      transform:
+        isVerticalSv.value === 1
+          ? [{ translateY: along }]
+          : [{ translateX: along }],
     };
   });
 
-  const tracksHeight = Math.min(
-    Math.max(tracks.length, 1) * TRACK_HEIGHT,
-    MAX_TRACKS_VISIBLE * TRACK_HEIGHT,
-  );
-  const selectionX =
-    selection && waveformWidth > 0
+  const tracksCrossPx = vertical
+    ? Math.max(tracks.length, 1) * TRACK_WIDTH
+    : Math.min(
+        Math.max(tracks.length, 1) * TRACK_HEIGHT,
+        MAX_TRACKS_VISIBLE * TRACK_HEIGHT,
+      );
+  const selectionAlong =
+    selection && paneSize > 0
       ? (selection.startMs - viewStartMs) / msPerPixel
       : 0;
-  const selectionWidth =
-    selection && waveformWidth > 0
+  const selectionAlongSize =
+    selection && paneSize > 0
       ? (selection.endMs - selection.startMs) / msPerPixel
       : 0;
-  const drawWidth = waveformWidth + overscanPx * 2;
+  const drawLength = paneSize + overscanPx * 2;
   const drawStartMs = viewStartMs - overscanPx * msPerPixel;
+  const selectionTrackIndex =
+    selection?.scope.kind === 'channel'
+      ? Math.max(
+          0,
+          tracks.findIndex((track) =>
+            selection.scope.kind === 'channel' &&
+            track.userId === selection.scope.userId,
+          ),
+        )
+      : -1;
+  const selectionCrossStart =
+    selectionTrackIndex >= 0
+      ? rulerCross + selectionTrackIndex * trackBreadth
+      : 0;
+  const selectionCrossSize =
+    selectionTrackIndex >= 0 ? trackBreadth : rulerCross + tracksCrossPx;
 
   async function resolvePlaybackSegments(): Promise<RecordingSegment[]> {
     if (!onPreparePlayback) {
@@ -1053,7 +1156,7 @@ export function CallTimeline({
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, vertical && styles.containerFill]}>
       <View style={styles.header}>
         {header}
       </View>
@@ -1158,87 +1261,141 @@ export function CallTimeline({
           </Pressable>
         ) : null}
       </View>
+      {inspect}
+      <View style={vertical ? styles.timelineFill : undefined}>
       <GestureDetector gesture={composed}>
         <View
-          style={styles.timeline}
-          onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+          style={[styles.timeline, vertical && styles.timelineFill]}
+          onLayout={(event) => {
+            setWidth(event.nativeEvent.layout.width);
+            setHeight(event.nativeEvent.layout.height);
+          }}
         >
-          <View style={styles.rulerRow}>
-            <View style={styles.rulerGutter} />
-            <View style={[styles.rulerClip, { width: waveformWidth }]}>
-              <Animated.View
-                style={[
-                  { width: drawWidth, marginLeft: -overscanPx },
-                  waveformShiftStyle,
-                ]}
-              >
-                <TimelineRuler
-                  width={drawWidth}
-                  height={RULER_HEIGHT}
-                  viewStartMs={drawStartMs}
-                  msPerPixel={msPerPixel}
-                />
-              </Animated.View>
-            </View>
-          </View>
-          <ScrollView
-            style={{ maxHeight: tracksHeight || TRACK_HEIGHT }}
-            nestedScrollEnabled
-          >
-            {tracks.length === 0 ? (
-              <View style={styles.emptyTrack}>
-                <Text style={styles.emptyText}>Waiting for participants…</Text>
+          {vertical ? (
+            <View style={styles.verticalBody}>
+              <View style={[styles.verticalRuler, { height: LABEL_HEIGHT + paneSize }]}>
+                <View style={styles.verticalCorner} />
+                <View style={[styles.rulerClipFill, { height: paneSize }]}>
+                  <Animated.View
+                    style={[
+                      { height: drawLength, marginTop: -overscanPx },
+                      waveformShiftStyle,
+                    ]}
+                  >
+                    <TimelineRuler
+                      width={RULER_GUTTER}
+                      height={drawLength}
+                      viewStartMs={drawStartMs}
+                      msPerPixel={msPerPixel}
+                      orientation="vertical"
+                    />
+                  </Animated.View>
+                </View>
               </View>
-            ) : (
-              tracks.map((track) => (
-                <ParticipantTrack
-                  key={track.userId}
-                  track={track}
-                  width={width}
-                  viewStartMs={viewStartMs}
-                  msPerPixel={msPerPixel}
-                  callStartedAtMs={startedAtMs}
-                  overscanPx={overscanPx}
-                  shiftStyle={waveformShiftStyle}
-                  solo={soloUserId === track.userId}
-                  onPressLabel={handleSolo}
-                />
-              ))
-            )}
-          </ScrollView>
+              <ScrollView
+                horizontal
+                nestedScrollEnabled
+                style={styles.tracksScroll}
+                contentContainerStyle={{ height: LABEL_HEIGHT + paneSize }}
+              >
+                {tracks.length === 0 ? (
+                  <View
+                    style={[
+                      styles.emptyTrackVertical,
+                      { height: LABEL_HEIGHT + paneSize },
+                    ]}
+                  >
+                    <Text style={styles.emptyText}>Waiting for participants…</Text>
+                  </View>
+                ) : (
+                  tracks.map((track) => (
+                    <ParticipantTrack
+                      key={track.userId}
+                      track={track}
+                      orientation="vertical"
+                      paneSize={paneSize}
+                      viewStartMs={viewStartMs}
+                      msPerPixel={msPerPixel}
+                      callStartedAtMs={startedAtMs}
+                      overscanPx={overscanPx}
+                      shiftStyle={waveformShiftStyle}
+                      solo={soloUserId === track.userId}
+                      onPressLabel={handleSolo}
+                    />
+                  ))
+                )}
+              </ScrollView>
+            </View>
+          ) : (
+            <>
+              <View style={styles.rulerRow}>
+                <View style={styles.rulerGutter} />
+                <View style={[styles.rulerClip, { width: paneSize }]}>
+                  <Animated.View
+                    style={[
+                      { width: drawLength, marginLeft: -overscanPx },
+                      waveformShiftStyle,
+                    ]}
+                  >
+                    <TimelineRuler
+                      width={drawLength}
+                      height={RULER_HEIGHT}
+                      viewStartMs={drawStartMs}
+                      msPerPixel={msPerPixel}
+                    />
+                  </Animated.View>
+                </View>
+              </View>
+              <ScrollView
+                style={{ maxHeight: tracksCrossPx || TRACK_HEIGHT }}
+                nestedScrollEnabled
+              >
+                {tracks.length === 0 ? (
+                  <View style={styles.emptyTrack}>
+                    <Text style={styles.emptyText}>Waiting for participants…</Text>
+                  </View>
+                ) : (
+                  tracks.map((track) => (
+                    <ParticipantTrack
+                      key={track.userId}
+                      track={track}
+                      orientation="horizontal"
+                      paneSize={paneSize}
+                      viewStartMs={viewStartMs}
+                      msPerPixel={msPerPixel}
+                      callStartedAtMs={startedAtMs}
+                      overscanPx={overscanPx}
+                      shiftStyle={waveformShiftStyle}
+                      solo={soloUserId === track.userId}
+                      onPressLabel={handleSolo}
+                    />
+                  ))
+                )}
+              </ScrollView>
+            </>
+          )}
           <View pointerEvents="none" style={styles.playheadLayer}>
-            {selection && selectionWidth > 0 ? (
+            {selection && selectionAlongSize > 0 ? (
               <View
                 style={[
                   styles.waveformOverlay,
-                  { left: LABEL_WIDTH, width: waveformWidth },
+                  vertical
+                    ? { top: LABEL_HEIGHT, height: paneSize, left: 0, right: 0 }
+                    : { left: LABEL_WIDTH, width: paneSize },
                 ]}
               >
                 <Animated.View
                   style={[StyleSheet.absoluteFill, waveformShiftStyle]}
                 >
-                  <Svg width={waveformWidth} height={RULER_HEIGHT + tracksHeight}>
+                  <Svg
+                    width={vertical ? rulerCross + tracksCrossPx : paneSize}
+                    height={vertical ? paneSize : rulerCross + tracksCrossPx}
+                  >
                     <Rect
-                      x={selectionX}
-                      y={
-                        selection.scope.kind === 'channel'
-                          ? RULER_HEIGHT +
-                            Math.max(
-                              0,
-                              tracks.findIndex(
-                                (track) =>
-                                  track.userId === selection.scope.userId,
-                              ),
-                            ) *
-                              TRACK_HEIGHT
-                          : 0
-                      }
-                      width={selectionWidth}
-                      height={
-                        selection.scope.kind === 'channel'
-                          ? TRACK_HEIGHT
-                          : RULER_HEIGHT + tracksHeight
-                      }
+                      x={vertical ? selectionCrossStart : selectionAlong}
+                      y={vertical ? selectionAlong : selectionCrossStart}
+                      width={vertical ? selectionCrossSize : selectionAlongSize}
+                      height={vertical ? selectionAlongSize : selectionCrossSize}
                       fill="#22c55e"
                       opacity={0.2}
                     />
@@ -1248,28 +1405,30 @@ export function CallTimeline({
             ) : null}
             <Animated.View
               style={[
-                styles.playhead,
-                { height: RULER_HEIGHT + tracksHeight },
+                vertical ? styles.playheadVertical : styles.playhead,
+                !vertical && { height: rulerCross + tracksCrossPx },
                 playheadStyle,
               ]}
             />
             {live && frozenDurationMs === null ? (
               <Animated.View
                 style={[
-                  styles.playhead,
+                  vertical ? styles.playheadVertical : styles.playhead,
                   styles.liveEdge,
-                  { height: RULER_HEIGHT + tracksHeight },
+                  !vertical && { height: rulerCross + tracksCrossPx },
                   liveEdgeStyle,
                 ]}
               />
             ) : null}
           </View>
-          {selection && selectionWidth > 0 ? (
+          {selection && selectionAlongSize > 0 ? (
             <View
               pointerEvents="none"
               style={[
                 styles.waveformOverlay,
-                { left: LABEL_WIDTH, width: waveformWidth },
+                vertical
+                  ? { top: LABEL_HEIGHT, height: paneSize, left: 0, right: 0 }
+                  : { left: LABEL_WIDTH, width: paneSize },
               ]}
             >
               <Animated.View
@@ -1277,50 +1436,34 @@ export function CallTimeline({
               >
                 <View
                   style={[
-                    styles.handle,
-                    {
-                      left: selectionX - 2,
-                      top:
-                        selection.scope.kind === 'channel'
-                          ? RULER_HEIGHT +
-                            Math.max(
-                              0,
-                              tracks.findIndex(
-                                (track) =>
-                                  track.userId === selection.scope.userId,
-                              ),
-                            ) *
-                              TRACK_HEIGHT
-                          : 0,
-                      height:
-                        selection.scope.kind === 'channel'
-                          ? TRACK_HEIGHT
-                          : RULER_HEIGHT + tracksHeight,
-                    },
+                    vertical ? styles.handleHorizontal : styles.handle,
+                    vertical
+                      ? {
+                          top: selectionAlong - 2,
+                          left: selectionCrossStart,
+                          width: selectionCrossSize,
+                        }
+                      : {
+                          left: selectionAlong - 2,
+                          top: selectionCrossStart,
+                          height: selectionCrossSize,
+                        },
                   ]}
                 />
                 <View
                   style={[
-                    styles.handle,
-                    {
-                      left: selectionX + selectionWidth - 2,
-                      top:
-                        selection.scope.kind === 'channel'
-                          ? RULER_HEIGHT +
-                            Math.max(
-                              0,
-                              tracks.findIndex(
-                                (track) =>
-                                  track.userId === selection.scope.userId,
-                              ),
-                            ) *
-                              TRACK_HEIGHT
-                          : 0,
-                      height:
-                        selection.scope.kind === 'channel'
-                          ? TRACK_HEIGHT
-                          : RULER_HEIGHT + tracksHeight,
-                    },
+                    vertical ? styles.handleHorizontal : styles.handle,
+                    vertical
+                      ? {
+                          top: selectionAlong + selectionAlongSize - 2,
+                          left: selectionCrossStart,
+                          width: selectionCrossSize,
+                        }
+                      : {
+                          left: selectionAlong + selectionAlongSize - 2,
+                          top: selectionCrossStart,
+                          height: selectionCrossSize,
+                        },
                   ]}
                 />
               </Animated.View>
@@ -1329,16 +1472,18 @@ export function CallTimeline({
           <AnnotationMarkers
             annotations={annotations}
             selectedId={selectedAnnotationId}
-            width={width}
+            orientation={orientation}
+            paneSize={paneSize}
             viewStartMs={viewStartMs}
             msPerPixel={msPerPixel}
             tracks={tracks}
-            tracksHeight={tracksHeight}
+            tracksCrossPx={tracksCrossPx}
             shiftStyle={waveformShiftStyle}
             onSelect={(id) => onSelectAnnotation?.(id)}
           />
         </View>
       </GestureDetector>
+      </View>
     </View>
   );
 }
@@ -1348,6 +1493,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#14532d',
     borderBottomWidth: 1,
     borderBottomColor: '#166534',
+  },
+  containerFill: {
+    flex: 1,
+    borderBottomWidth: 0,
   },
   header: {
     flexDirection: 'row',
@@ -1404,6 +1553,9 @@ const styles = StyleSheet.create({
   timeline: {
     position: 'relative',
   },
+  timelineFill: {
+    flex: 1,
+  },
   rulerRow: {
     flexDirection: 'row',
     height: RULER_HEIGHT,
@@ -1415,8 +1567,32 @@ const styles = StyleSheet.create({
   rulerClip: {
     overflow: 'hidden',
   },
+  rulerClipFill: {
+    flex: 1,
+    overflow: 'hidden',
+  },
+  verticalBody: {
+    flex: 1,
+    flexDirection: 'row',
+  },
+  verticalRuler: {
+    width: RULER_GUTTER,
+    backgroundColor: '#14532d',
+  },
+  verticalCorner: {
+    height: LABEL_HEIGHT,
+    backgroundColor: '#14532d',
+  },
+  tracksScroll: {
+    flex: 1,
+  },
   emptyTrack: {
     height: TRACK_HEIGHT,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+  emptyTrackVertical: {
+    minWidth: 180,
     justifyContent: 'center',
     paddingHorizontal: 16,
   },
@@ -1441,12 +1617,27 @@ const styles = StyleSheet.create({
     marginLeft: -1,
     backgroundColor: '#facc15',
   },
+  playheadVertical: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 2,
+    marginTop: -1,
+    backgroundColor: '#facc15',
+  },
   liveEdge: {
     backgroundColor: '#ef4444',
   },
   handle: {
     position: 'absolute',
     width: 4,
+    backgroundColor: '#86efac',
+    borderRadius: 2,
+  },
+  handleHorizontal: {
+    position: 'absolute',
+    height: 4,
     backgroundColor: '#86efac',
     borderRadius: 2,
   },

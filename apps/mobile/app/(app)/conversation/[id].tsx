@@ -14,6 +14,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuth } from '@/context/auth';
+import { usePreferences } from '@/context/preferences';
 import { AnnotationInspect } from '@/components/timeline/annotation-inspect';
 import { CallTimeline } from '@/components/timeline/call-timeline';
 import {
@@ -135,6 +136,8 @@ export default function ConversationScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const insets = useSafeAreaInsets();
   const { user, token, realtime } = useAuth();
+  const { timelineOrientation } = usePreferences();
+  const timelineOwnsBody = timelineOrientation === 'vertical';
   const [messages, setMessages] = useState<Message[]>([]);
   const [memberNames, setMemberNames] = useState<Map<string, string>>(
     () => new Map(),
@@ -995,6 +998,7 @@ export default function ConversationScreen() {
   }
 
   const showCallBar = inCall || callId !== null;
+  const hideChat = timelineOwnsBody && showCallBar && Boolean(callStartedAt);
   const callControls = (
     <View style={styles.callHeader}>
       <View>
@@ -1050,6 +1054,63 @@ export default function ConversationScreen() {
     </View>
   );
 
+  const inspectPanel = selectedAnnotation ? (
+    <AnnotationInspect
+      annotation={selectedAnnotation}
+      channelLabel={
+        selectedAnnotation.scope.kind === 'channel'
+          ? memberNames.get(selectedAnnotation.scope.userId) ??
+            'One channel'
+          : 'All channels'
+      }
+      canEdit={selectedAnnotation.createdBy.id === user.id}
+      onChangeNote={(note) => {
+        if (!token || !conversationId || !callId) {
+          return;
+        }
+        void updateCallAnnotation(
+          token,
+          conversationId,
+          callId,
+          selectedAnnotation.id,
+          { note },
+        ).then((updated) => {
+          const mapped = toTimelineAnnotation(updated);
+          setAnnotations((current) =>
+            current.map((item) =>
+              item.id === mapped.id ? mapped : item,
+            ),
+          );
+        }).catch((err: unknown) => {
+          setError(
+            err instanceof Error ? err.message : 'Failed to update note',
+          );
+        });
+      }}
+      onDismiss={() => setSelectedAnnotationId(null)}
+      onDelete={() => {
+        if (!token || !conversationId || !callId) {
+          return;
+        }
+        void deleteCallAnnotation(
+          token,
+          conversationId,
+          callId,
+          selectedAnnotation.id,
+        ).then(() => {
+          setAnnotations((current) =>
+            current.filter((item) => item.id !== selectedAnnotation.id),
+          );
+          setSelectedAnnotationId(null);
+        }).catch((err: unknown) => {
+          setError(
+            err instanceof Error ? err.message : 'Failed to delete annotation',
+          );
+        });
+      }}
+    />
+  ) : null;
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -1072,7 +1133,9 @@ export default function ConversationScreen() {
               status: recording.status,
             }))}
             live={callIsLive}
+            orientation={timelineOrientation}
             header={callControls}
+            inspect={hideChat ? inspectPanel : null}
             onReplayActiveChange={(active) => {
               callSessionRef.current?.setRemoteAudioMuted(active);
             }}
@@ -1110,70 +1173,17 @@ export default function ConversationScreen() {
         </View>
       )}
 
-      {selectedAnnotation ? (
-        <AnnotationInspect
-          annotation={selectedAnnotation}
-          channelLabel={
-            selectedAnnotation.scope.kind === 'channel'
-              ? memberNames.get(selectedAnnotation.scope.userId) ??
-                'One channel'
-              : 'All channels'
-          }
-          canEdit={selectedAnnotation.createdBy.id === user.id}
-          onChangeNote={(note) => {
-            if (!token || !conversationId || !callId) {
-              return;
-            }
-            void updateCallAnnotation(
-              token,
-              conversationId,
-              callId,
-              selectedAnnotation.id,
-              { note },
-            ).then((updated) => {
-              const mapped = toTimelineAnnotation(updated);
-              setAnnotations((current) =>
-                current.map((item) =>
-                  item.id === mapped.id ? mapped : item,
-                ),
-              );
-            }).catch((err: unknown) => {
-              setError(
-                err instanceof Error ? err.message : 'Failed to update note',
-              );
-            });
-          }}
-          onDismiss={() => setSelectedAnnotationId(null)}
-          onDelete={() => {
-            if (!token || !conversationId || !callId) {
-              return;
-            }
-            void deleteCallAnnotation(
-              token,
-              conversationId,
-              callId,
-              selectedAnnotation.id,
-            ).then(() => {
-              setAnnotations((current) =>
-                current.filter((item) => item.id !== selectedAnnotation.id),
-              );
-              setSelectedAnnotationId(null);
-            }).catch((err: unknown) => {
-              setError(
-                err instanceof Error ? err.message : 'Failed to delete annotation',
-              );
-            });
-          }}
-        />
-      ) : null}
+      {!hideChat ? inspectPanel : null}
 
-      {recordingNotice ? (
+      {!hideChat && recordingNotice ? (
         <Text style={styles.recordingNotice}>{recordingNotice}</Text>
       ) : null}
 
-      {isLoading ? (
+      {!hideChat && isLoading ? (
         <ActivityIndicator style={styles.centered} />
-      ) : (
+      ) : null}
+
+      {!hideChat && !isLoading ? (
         <FlatList
           style={styles.messageList}
           data={sortedMessages}
@@ -1202,10 +1212,11 @@ export default function ConversationScreen() {
             );
           }}
         />
-      )}
+      ) : null}
 
       {error ? <Text style={styles.error}>{error}</Text> : null}
 
+      {!hideChat ? (
       <View
         style={[
           styles.composer,
@@ -1226,6 +1237,7 @@ export default function ConversationScreen() {
           <Text style={styles.sendText}>Send</Text>
         </Pressable>
       </View>
+      ) : null}
     </KeyboardAvoidingView>
   );
 }

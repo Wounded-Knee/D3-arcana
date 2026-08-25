@@ -2,29 +2,43 @@ import { Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native'
 import Animated, { type AnimatedStyle } from 'react-native-reanimated';
 
 import { LABEL_WIDTH, OVERSCAN_PX } from './timeline-math';
-import { TRACK_HEIGHT } from './participant-track';
+import {
+  LABEL_HEIGHT,
+  RULER_GUTTER,
+  RULER_HEIGHT,
+  TRACK_HEIGHT,
+  TRACK_WIDTH,
+  type TimelineOrientation,
+} from './timeline-layout';
 import type { TimelineAnnotation, TimelineTrack } from './timeline-model';
 
-const RULER_HEIGHT = 22;
 const CHIP_MIN_WIDTH = 52;
 const POINT_PAD_MS_FALLBACK = 400;
 
 type AnnotationMarkersProps = {
   annotations: TimelineAnnotation[];
   selectedId: string | null;
-  width: number;
+  orientation?: TimelineOrientation;
+  paneSize: number;
   viewStartMs: number;
   msPerPixel: number;
   tracks: TimelineTrack[];
-  tracksHeight: number;
+  tracksCrossPx: number;
   shiftStyle: AnimatedStyle<ViewStyle>;
   onSelect: (id: string) => void;
 };
 
-function trackTop(tracks: TimelineTrack[], userId: string): number | null {
+function trackOffset(
+  tracks: TimelineTrack[],
+  userId: string,
+  orientation: TimelineOrientation,
+): number | null {
   const index = tracks.findIndex((track) => track.userId === userId);
   if (index < 0) {
     return null;
+  }
+  if (orientation === 'vertical') {
+    return RULER_GUTTER + index * TRACK_WIDTH;
   }
   return RULER_HEIGHT + index * TRACK_HEIGHT;
 }
@@ -32,48 +46,58 @@ function trackTop(tracks: TimelineTrack[], userId: string): number | null {
 export function AnnotationMarkers({
   annotations,
   selectedId,
-  width,
+  orientation = 'horizontal',
+  paneSize,
   viewStartMs,
   msPerPixel,
   tracks,
-  tracksHeight,
+  tracksCrossPx,
   shiftStyle,
   onSelect,
 }: AnnotationMarkersProps) {
-  const waveformWidth = Math.max(0, width - LABEL_WIDTH);
-  if (waveformWidth <= 0) {
+  if (paneSize <= 0) {
     return null;
   }
 
+  const vertical = orientation === 'vertical';
+  const clipStyle = vertical
+    ? { top: LABEL_HEIGHT, height: paneSize, left: 0, right: 0 }
+    : { left: LABEL_WIDTH, width: paneSize, top: 0, bottom: 0 };
+
   return (
-    <View pointerEvents="box-none" style={[styles.clip, { left: LABEL_WIDTH, width: waveformWidth }]}>
+    <View pointerEvents="box-none" style={[styles.clip, clipStyle]}>
       <Animated.View pointerEvents="box-none" style={[styles.layer, shiftStyle]}>
       {annotations.map((annotation) => {
         const isPoint = annotation.endMs <= annotation.startMs;
-        const labelWidth = Math.max(
-          CHIP_MIN_WIDTH,
-          annotation.profile.name.length * 7 + 16,
-        );
-        const rangeWidth = isPoint
-          ? Math.max(labelWidth, POINT_PAD_MS_FALLBACK / msPerPixel)
+        const labelAlongPx = vertical
+          ? 20
+          : Math.max(
+              CHIP_MIN_WIDTH,
+              annotation.profile.name.length * 7 + 16,
+            );
+        const rangePx = isPoint
+          ? Math.max(labelAlongPx, POINT_PAD_MS_FALLBACK / msPerPixel)
           : (annotation.endMs - annotation.startMs) / msPerPixel;
-        const startX = isPoint
-          ? (annotation.startMs - viewStartMs) / msPerPixel - rangeWidth / 2
+        const startPx = isPoint
+          ? (annotation.startMs - viewStartMs) / msPerPixel - rangePx / 2
           : (annotation.startMs - viewStartMs) / msPerPixel;
-        const left = startX;
         const selected = selectedId === annotation.id;
-
-        const top =
+        const crossStart =
           annotation.scope.kind === 'channel'
-            ? (trackTop(tracks, annotation.scope.userId) ?? 0)
+            ? (trackOffset(tracks, annotation.scope.userId, orientation) ?? 0)
             : 0;
-        const height =
+        const crossSize =
           annotation.scope.kind === 'channel'
-            ? TRACK_HEIGHT
-            : RULER_HEIGHT + tracksHeight;
-        const boxWidth = Math.max(rangeWidth, labelWidth);
+            ? vertical
+              ? TRACK_WIDTH
+              : TRACK_HEIGHT
+            : vertical
+              ? RULER_GUTTER + tracksCrossPx
+              : RULER_HEIGHT + tracksCrossPx;
+        const alongSize = Math.max(rangePx, labelAlongPx);
+        const allChannelCross = vertical ? RULER_GUTTER : RULER_HEIGHT;
 
-        if (left + boxWidth < -OVERSCAN_PX || left > waveformWidth + OVERSCAN_PX) {
+        if (startPx + alongSize < -OVERSCAN_PX || startPx > paneSize + OVERSCAN_PX) {
           return null;
         }
 
@@ -84,10 +108,19 @@ export function AnnotationMarkers({
             style={[
               styles.box,
               {
-                left,
-                top,
-                width: boxWidth,
-                height: annotation.scope.kind === 'all' ? RULER_HEIGHT : height,
+                ...(vertical
+                  ? {
+                      top: startPx,
+                      height: alongSize,
+                      left: crossStart,
+                      width: annotation.scope.kind === 'all' ? allChannelCross : crossSize,
+                    }
+                  : {
+                      left: startPx,
+                      width: alongSize,
+                      top: crossStart,
+                      height: annotation.scope.kind === 'all' ? allChannelCross : crossSize,
+                    }),
                 backgroundColor: selected
                   ? `${annotation.profile.color}55`
                   : `${annotation.profile.color}33`,
@@ -115,8 +148,6 @@ export function AnnotationMarkers({
 const styles = StyleSheet.create({
   clip: {
     position: 'absolute',
-    top: 0,
-    bottom: 0,
     overflow: 'hidden',
   },
   layer: {

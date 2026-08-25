@@ -14,10 +14,16 @@ import {
   createMessageSchema,
   createUserSchema,
   listMessagesQuerySchema,
+  updateUserPreferencesSchema,
   userIdParamSchema,
 } from "./schemas/http.js";
 import { requireAuth } from "../auth/require-auth.js";
-import { createUser, getUserById } from "../repositories/users.js";
+import {
+  createUser,
+  getUserById,
+  getUserPreferences,
+  upsertUserPreferences,
+} from "../repositories/users.js";
 import {
   addConversationMember,
   createConversation,
@@ -87,6 +93,25 @@ export function registerApiRoutes(app: Express): void {
       }
 
       res.json(user);
+    }),
+  );
+
+  router.get(
+    "/me/preferences",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const preferences = await getUserPreferences(req.user!.userId);
+      res.json(preferences);
+    }),
+  );
+
+  router.patch(
+    "/me/preferences",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const body = parseBody(updateUserPreferencesSchema, req.body);
+      const preferences = await upsertUserPreferences(req.user!.userId, body);
+      res.json(preferences);
     }),
   );
 

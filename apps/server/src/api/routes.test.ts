@@ -32,6 +32,59 @@ describe("HTTP API routes", () => {
     expect(response.body.displayName).toBe("Alice");
   });
 
+  it("reads and updates timeline orientation preferences for the authenticated user", async () => {
+    const alice = await createUser("Alice");
+    const bob = await createUser("Bob");
+    const app = await createAuthenticatedTestApp({
+      "test-alice": alice.id,
+      "test-bob": bob.id,
+    });
+
+    const initial = await request(app)
+      .get("/api/v1/me/preferences")
+      .set("Authorization", "Bearer test-alice")
+      .expect(200);
+
+    expect(initial.body.timelineOrientation).toBe("horizontal");
+
+    const updated = await request(app)
+      .patch("/api/v1/me/preferences")
+      .set("Authorization", "Bearer test-alice")
+      .send({ timelineOrientation: "vertical" })
+      .expect(200);
+
+    expect(updated.body.timelineOrientation).toBe("vertical");
+
+    const fetched = await request(app)
+      .get("/api/v1/me/preferences")
+      .set("Authorization", "Bearer test-alice")
+      .expect(200);
+
+    expect(fetched.body.timelineOrientation).toBe("vertical");
+
+    const bobPrefs = await request(app)
+      .get("/api/v1/me/preferences")
+      .set("Authorization", "Bearer test-bob")
+      .expect(200);
+
+    expect(bobPrefs.body.timelineOrientation).toBe("horizontal");
+  });
+
+  it("rejects invalid timeline orientation values", async () => {
+    const alice = await createUser("Alice");
+    const app = await createAuthenticatedTestApp({
+      "test-alice": alice.id,
+    });
+
+    const response = await request(app)
+      .patch("/api/v1/me/preferences")
+      .set("Authorization", "Bearer test-alice")
+      .send({ timelineOrientation: "diagonal" })
+      .expect(400);
+
+    expect(response.body.code).toBe("bad_request");
+  });
+
   it("creates and fetches users", async () => {
     const app = await createTestApp();
 

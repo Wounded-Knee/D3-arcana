@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AnnotationInspect } from '@/components/timeline/annotation-inspect';
 import { CallTimeline } from '@/components/timeline/call-timeline';
+import { usePreferences } from '@/context/preferences';
 import type {
   TimelineAnnotation,
   TimelineAnnotationProfile,
@@ -76,6 +77,8 @@ function nextTrackIndex(tracks: TimelineTrack[]): number {
 }
 
 export default function TimelineTestScreen() {
+  const { timelineOrientation } = usePreferences();
+  const vertical = timelineOrientation === 'vertical';
   const [{ startedAt, endedAt }] = useState(createCallWindow);
   const [tracks, setTracks] = useState(() => [
     createSimulatedTrack(1, startedAt, endedAt),
@@ -101,6 +104,36 @@ export default function TimelineTestScreen() {
   const selectedAnnotation = annotations.find(
     (item) => item.id === selectedAnnotationId,
   );
+
+  const inspectPanel = selectedAnnotation ? (
+    <AnnotationInspect
+      annotation={selectedAnnotation}
+      channelLabel={
+        selectedAnnotation.scope.kind === 'channel'
+          ? tracks.find(
+              (track) =>
+                selectedAnnotation.scope.kind === 'channel' &&
+                track.userId === selectedAnnotation.scope.userId,
+            )?.displayName ?? 'One channel'
+          : 'All channels'
+      }
+      canEdit
+      onChangeNote={(note) => {
+        setAnnotations((current) =>
+          current.map((item) =>
+            item.id === selectedAnnotation.id ? { ...item, note } : item,
+          ),
+        );
+      }}
+      onDismiss={() => setSelectedAnnotationId(null)}
+      onDelete={() => {
+        setAnnotations((current) =>
+          current.filter((item) => item.id !== selectedAnnotation.id),
+        );
+        setSelectedAnnotationId(null);
+      }}
+    />
+  ) : null;
 
   const header = (
     <View style={styles.header}>
@@ -131,7 +164,9 @@ export default function TimelineTestScreen() {
         endedAt={endedAt}
         tracks={tracks}
         live={false}
+        orientation={timelineOrientation}
         header={header}
+        inspect={vertical ? inspectPanel : null}
         profiles={TEST_PROFILES}
         annotations={annotations}
         selectedAnnotationId={selectedAnnotationId}
@@ -176,32 +211,7 @@ export default function TimelineTestScreen() {
           );
         }}
       />
-      {selectedAnnotation ? (
-        <AnnotationInspect
-          annotation={selectedAnnotation}
-          channelLabel={
-            selectedAnnotation.scope.kind === 'channel'
-              ? tracks.find((track) => track.userId === selectedAnnotation.scope.userId)
-                  ?.displayName ?? 'One channel'
-              : 'All channels'
-          }
-          canEdit
-          onChangeNote={(note) => {
-            setAnnotations((current) =>
-              current.map((item) =>
-                item.id === selectedAnnotation.id ? { ...item, note } : item,
-              ),
-            );
-          }}
-          onDismiss={() => setSelectedAnnotationId(null)}
-          onDelete={() => {
-            setAnnotations((current) =>
-              current.filter((item) => item.id !== selectedAnnotation.id),
-            );
-            setSelectedAnnotationId(null);
-          }}
-        />
-      ) : null}
+      {!vertical ? inspectPanel : null}
     </View>
   );
 }

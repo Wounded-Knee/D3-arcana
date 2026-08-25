@@ -3,14 +3,21 @@ import { Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native'
 import Animated, { type AnimatedStyle } from 'react-native-reanimated';
 
 import { LABEL_WIDTH } from './timeline-math';
+import {
+  LABEL_HEIGHT,
+  TRACK_HEIGHT,
+  TRACK_WIDTH,
+  type TimelineOrientation,
+} from './timeline-layout';
 import type { TimelineTrack } from './timeline-model';
 import { WaveformBars } from './waveform-bars';
 
-export const TRACK_HEIGHT = 48;
+export { TRACK_HEIGHT, TRACK_WIDTH };
 
 type ParticipantTrackProps = {
   track: TimelineTrack;
-  width: number;
+  orientation?: TimelineOrientation;
+  paneSize: number;
   viewStartMs: number;
   msPerPixel: number;
   callStartedAtMs: number;
@@ -22,7 +29,8 @@ type ParticipantTrackProps = {
 
 export const ParticipantTrack = memo(function ParticipantTrack({
   track,
-  width,
+  orientation = 'horizontal',
+  paneSize,
   viewStartMs,
   msPerPixel,
   callStartedAtMs,
@@ -31,35 +39,69 @@ export const ParticipantTrack = memo(function ParticipantTrack({
   solo = false,
   onPressLabel,
 }: ParticipantTrackProps) {
-  const waveformWidth = Math.max(0, width - LABEL_WIDTH);
-  const drawWidth = waveformWidth + overscanPx * 2;
+  const vertical = orientation === 'vertical';
+  const drawLength = paneSize + overscanPx * 2;
   const drawStartMs = viewStartMs - overscanPx * msPerPixel;
+  const label = (
+    <Pressable
+      style={[
+        vertical ? styles.labelVertical : styles.label,
+        solo && styles.labelSolo,
+      ]}
+      onPress={() => onPressLabel?.(track.userId)}
+    >
+      <Text style={[styles.labelText, solo && styles.labelTextSolo]} numberOfLines={1}>
+        {track.displayName}
+      </Text>
+    </Pressable>
+  );
+
+  if (vertical) {
+    return (
+      <View style={[styles.column, { height: LABEL_HEIGHT + paneSize }]}>
+        {label}
+        <View style={[styles.waveform, { width: TRACK_WIDTH, height: paneSize }]}>
+          <Animated.View
+            style={[
+              { height: drawLength, marginTop: -overscanPx },
+              shiftStyle,
+            ]}
+          >
+            <WaveformBars
+              width={TRACK_WIDTH}
+              height={drawLength}
+              viewStartMs={drawStartMs}
+              msPerPixel={msPerPixel}
+              callStartedAtMs={callStartedAtMs}
+              sessions={track.sessions}
+              chunks={track.chunks}
+              orientation="vertical"
+            />
+          </Animated.View>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.row}>
-      <Pressable
-        style={[styles.label, solo && styles.labelSolo]}
-        onPress={() => onPressLabel?.(track.userId)}
-      >
-        <Text style={[styles.labelText, solo && styles.labelTextSolo]} numberOfLines={1}>
-          {track.displayName}
-        </Text>
-      </Pressable>
-      <View style={[styles.waveform, { width: waveformWidth }]}>
+      {label}
+      <View style={[styles.waveform, { width: paneSize }]}>
         <Animated.View
           style={[
-            { width: drawWidth, marginLeft: -overscanPx },
+            { width: drawLength, marginLeft: -overscanPx },
             shiftStyle,
           ]}
         >
           <WaveformBars
-            width={drawWidth}
+            width={drawLength}
             height={TRACK_HEIGHT}
             viewStartMs={drawStartMs}
             msPerPixel={msPerPixel}
             callStartedAtMs={callStartedAtMs}
             sessions={track.sessions}
             chunks={track.chunks}
+            orientation="horizontal"
           />
         </Animated.View>
       </View>
@@ -74,10 +116,23 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#166534',
   },
+  column: {
+    width: TRACK_WIDTH,
+    overflow: 'hidden',
+    borderRightWidth: StyleSheet.hairlineWidth,
+    borderRightColor: '#166534',
+  },
   label: {
     width: LABEL_WIDTH,
     paddingHorizontal: 8,
     justifyContent: 'center',
+    backgroundColor: '#14532d',
+  },
+  labelVertical: {
+    height: LABEL_HEIGHT,
+    paddingHorizontal: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
     backgroundColor: '#14532d',
   },
   labelSolo: {

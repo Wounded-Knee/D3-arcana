@@ -209,6 +209,29 @@ export async function fetchCurrentUser(token: string): Promise<User> {
   return request<User>(token, '/api/v1/me');
 }
 
+export type TimelineOrientationPreference = 'horizontal' | 'vertical';
+
+export type UserPreferences = {
+  timelineOrientation: TimelineOrientationPreference;
+  updatedAt: string | null;
+};
+
+export async function fetchUserPreferences(
+  token: string,
+): Promise<UserPreferences> {
+  return request<UserPreferences>(token, '/api/v1/me/preferences');
+}
+
+export async function updateUserPreferences(
+  token: string,
+  preferences: { timelineOrientation: TimelineOrientationPreference },
+): Promise<UserPreferences> {
+  return request<UserPreferences>(token, '/api/v1/me/preferences', {
+    method: 'PATCH',
+    body: JSON.stringify(preferences),
+  });
+}
+
 export async function fetchConversations(token: string): Promise<Conversation[]> {
   const data = await request<{ conversations: Conversation[] }>(
     token,

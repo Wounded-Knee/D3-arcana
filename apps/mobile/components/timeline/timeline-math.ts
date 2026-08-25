@@ -47,16 +47,16 @@ export function ticksForViewport(
 
 export function clampMsPerPixel(
   msPerPixel: number,
-  width: number,
+  paneSize: number,
   durationMs: number,
 ): number {
   'worklet';
-  if (width <= 0) {
+  if (paneSize <= 0) {
     return msPerPixel;
   }
 
-  const min = MIN_VIEWPORT_MS / width;
-  const max = Math.max(durationMs, DEFAULT_VIEWPORT_MS) / width;
+  const min = MIN_VIEWPORT_MS / paneSize;
+  const max = Math.max(durationMs, DEFAULT_VIEWPORT_MS) / paneSize;
   return Math.min(max, Math.max(min, msPerPixel));
 }
 
