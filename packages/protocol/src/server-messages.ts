@@ -73,6 +73,7 @@ export const callRecordingFragmentMessageSchema = z.object({
   callId: z.uuid(),
   userId: z.uuid(),
   fragmentId: z.uuid(),
+  recordingId: z.uuid(),
   callOffsetMs: z.number().int().nonnegative(),
   durationMs: z.number().int().nonnegative(),
   playbackUrl: z.string().min(1),

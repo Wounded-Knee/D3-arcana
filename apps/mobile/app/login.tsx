@@ -67,7 +67,7 @@ export default function LoginScreen() {
       </Pressable>
 
       <Link href={'/timeline-test' as Href} asChild>
-        <Pressable style={[styles.button, styles.testButton]}>
+        <Pressable style={StyleSheet.flatten([styles.button, styles.testButton])}>
           <Text style={styles.buttonText}>Timeline Test</Text>
         </Pressable>
       </Link>

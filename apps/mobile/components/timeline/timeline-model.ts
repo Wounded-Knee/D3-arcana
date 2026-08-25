@@ -21,6 +21,52 @@ export type TimelineTrack = {
   chunks: TimelineChunk[];
 };
 
+export type ChannelScope =
+  | { kind: 'all' }
+  | { kind: 'channel'; userId: string };
+
+export type TimelineSelection = {
+  id?: string;
+  startMs: number;
+  endMs: number;
+  scope: ChannelScope;
+};
+
+export type TimelineAnnotationProfile = {
+  id: string;
+  key: string;
+  name: string;
+  color: string;
+  icon: string;
+};
+
+export type TimelineAnnotation = {
+  id: string;
+  profile: TimelineAnnotationProfile;
+  note: string | null;
+  startMs: number;
+  endMs: number;
+  scope: ChannelScope;
+  selectionId: string | null;
+  createdBy: { id: string; displayName: string };
+};
+
+export function scopeUserId(scope: ChannelScope): string | null {
+  return scope.kind === 'channel' ? scope.userId : null;
+}
+
+export function scopeFromUserId(userId: string | null | undefined): ChannelScope {
+  return userId ? { kind: 'channel', userId } : { kind: 'all' };
+}
+
+export function roundOffsetMs(value: number): number {
+  if (!Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+
+  return Math.round(value);
+}
+
 function mergeChunk(
   existing: number[] | undefined,
   incoming: number[],

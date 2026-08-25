@@ -8,6 +8,10 @@ import {
   fileTimeSec,
   isAudibleAtPlayhead,
 } from './recording-seek';
+import {
+  isUpcomingSegment,
+  shouldSeekAudio,
+} from './playback-sync';
 import type { PlaybackClock, RecordingSegment } from './playback-types';
 
 const MAX_PLAYERS = 16;
@@ -35,6 +39,7 @@ async function ensureAudioMode(): Promise<void> {
 
 export function createPlaybackClock(): PlaybackClock {
   const players = new Map<string, PooledPlayer>();
+  const seeking = new Set<string>();
   let raf = 0;
   let startedAt = 0;
   let originPlayhead = 0;
@@ -81,6 +86,7 @@ export function createPlaybackClock(): PlaybackClock {
     pooled.player.pause();
     pooled.player.remove();
     players.delete(id);
+    seeking.delete(id);
   }
 
   function evict(playheadMs: number, keepIds: Set<string>): void {
@@ -135,6 +141,26 @@ export function createPlaybackClock(): PlaybackClock {
   function sync(playheadMs: number): void {
     const audible = audibleSegments(playheadMs);
     const audibleIds = new Set(audible.map((item) => item.id));
+    const keepIds = new Set(audibleIds);
+
+    for (const segment of segments) {
+      if (
+        !segment.playbackUrl ||
+        (soloUserId && segment.userId !== soloUserId)
+      ) {
+        continue;
+      }
+      if (
+        isUpcomingSegment(
+          playheadMs,
+          segment.callOffsetMs,
+          segment.durationMs,
+        )
+      ) {
+        keepIds.add(segment.id);
+        playerFor(segment);
+      }
+    }
 
     for (const segment of segments) {
       if (!audibleIds.has(segment.id)) {
@@ -151,12 +177,23 @@ export function createPlaybackClock(): PlaybackClock {
       }
 
       const target = Math.max(0, fileTimeSec(playheadMs, segment.callOffsetMs));
-      if (Math.abs(player.currentTime - target) > 0.25) {
-        void player.seekTo(target).then(() => {
-          if (raf && audibleIds.has(segment.id) && !player.playing) {
-            player.play();
-          }
-        }).catch(() => undefined);
+      if (seeking.has(segment.id)) {
+        continue;
+      }
+
+      if (shouldSeekAudio(player.currentTime, target, player.playing)) {
+        seeking.add(segment.id);
+        void player
+          .seekTo(target)
+          .then(() => {
+            seeking.delete(segment.id);
+            if (raf && audibleIds.has(segment.id) && !player.playing) {
+              player.play();
+            }
+          })
+          .catch(() => {
+            seeking.delete(segment.id);
+          });
         continue;
       }
 
@@ -165,7 +202,7 @@ export function createPlaybackClock(): PlaybackClock {
       }
     }
 
-    evict(playheadMs, audibleIds);
+    evict(playheadMs, keepIds);
   }
 
   function tick(): void {

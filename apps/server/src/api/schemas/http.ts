@@ -29,6 +29,54 @@ export const conversationCallParamsSchema = z.object({
   callId: z.uuid(),
 });
 
+export const conversationCallRecordingParamsSchema = z.object({
+  conversationId: z.uuid(),
+  callId: z.uuid(),
+  recordingId: z.uuid(),
+});
+
+export const conversationCallSelectionParamsSchema = z.object({
+  conversationId: z.uuid(),
+  callId: z.uuid(),
+  selectionId: z.uuid(),
+});
+
+export const conversationCallAnnotationParamsSchema = z.object({
+  conversationId: z.uuid(),
+  callId: z.uuid(),
+  annotationId: z.uuid(),
+});
+
+const offsetMsSchema = z
+  .number()
+  .nonnegative()
+  .transform((value) => Math.round(value));
+
+export const createSelectionSchema = z.object({
+  startOffsetMs: offsetMsSchema,
+  endOffsetMs: offsetMsSchema,
+  userId: z.uuid().nullable().optional(),
+});
+
+export const updateSelectionSchema = z.object({
+  startOffsetMs: offsetMsSchema.optional(),
+  endOffsetMs: offsetMsSchema.optional(),
+  userId: z.uuid().nullable().optional(),
+});
+
+export const createAnnotationSchema = z.object({
+  profileId: z.uuid(),
+  selectionId: z.uuid().nullable().optional(),
+  startOffsetMs: offsetMsSchema.optional(),
+  endOffsetMs: offsetMsSchema.optional(),
+  userId: z.uuid().nullable().optional(),
+});
+
+export const updateAnnotationSchema = z.object({
+  note: z.string().max(10_000).nullable().optional(),
+  selectionId: z.uuid().nullable().optional(),
+});
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

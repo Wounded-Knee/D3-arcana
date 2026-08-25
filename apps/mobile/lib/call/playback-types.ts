@@ -5,6 +5,7 @@ export type RecordingSegment = {
   durationMs: number;
   playbackUrl: string | null;
   status: string;
+  recordingId?: string;
 };
 
 export type PlaybackClock = {

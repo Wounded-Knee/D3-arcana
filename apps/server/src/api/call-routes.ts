@@ -5,10 +5,21 @@ import type { ServerMessage } from "@d3-arcana/protocol";
 import {
   asyncHandler,
   BadRequestError,
+  ConflictError,
   ForbiddenError,
   NotFoundError,
 } from "./errors.js";
-import { conversationCallParamsSchema, conversationIdParamSchema } from "./schemas/http.js";
+import {
+  conversationCallAnnotationParamsSchema,
+  conversationCallParamsSchema,
+  conversationCallRecordingParamsSchema,
+  conversationCallSelectionParamsSchema,
+  conversationIdParamSchema,
+  createAnnotationSchema,
+  createSelectionSchema,
+  updateAnnotationSchema,
+  updateSelectionSchema,
+} from "./schemas/http.js";
 import { requireAuth } from "../auth/require-auth.js";
 import {
   cancelEmptyRoomGrace,
@@ -35,6 +46,7 @@ import {
   listRecordingsForCall,
 } from "../repositories/recordings.js";
 import { listFragmentsForCall } from "../repositories/recording-fragments.js";
+import { buildRecordingMedia } from "../calls/concat-recording.js";
 import {
   PLAYBACK_URL_TTL_SECONDS,
 } from "../storage/types.js";
@@ -48,6 +60,24 @@ import {
   isConversationMember,
 } from "../repositories/conversations.js";
 import { getUserById } from "../repositories/users.js";
+import {
+  AnnotationConflictError,
+  AnnotationForbiddenError,
+  AnnotationValidationError,
+  createCallAnnotation,
+  createCallSelection,
+  deleteCallAnnotation,
+  deleteCallSelection,
+  getCallAnnotationById,
+  getCallSelectionById,
+  listAnnotationProfiles,
+  listCallAnnotations,
+  listCallSelections,
+  serializeAnnotation,
+  serializeSelection,
+  updateCallAnnotation,
+  updateCallSelection,
+} from "../repositories/annotations.js";
 
 const joinCallBodySchema = z.object({
   role: z.enum(["publisher", "subscriber"]).default("publisher"),
@@ -524,6 +554,7 @@ export function registerCallRoutes(
         recordings: await Promise.all(
           fragments.map(async (fragment) => ({
             id: fragment.id,
+            recordingId: fragment.recordingId,
             callId: fragment.callId,
             userId: fragment.userId,
             status: "ready",
@@ -545,7 +576,288 @@ export function registerCallRoutes(
     }),
   );
 
+  router.get(
+    "/conversations/:conversationId/calls/:callId/recordings/:recordingId/media",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId, callId, recordingId } = parseParams(
+        conversationCallRecordingParamsSchema,
+        req.params,
+      );
+      const userId = req.user!.userId;
+
+      const conversation = await getConversationById(conversationId);
+      if (!conversation) {
+        throw new NotFoundError("Conversation not found");
+      }
+
+      const isMember = await isConversationMember(conversationId, userId);
+      if (!isMember) {
+        throw new ForbiddenError("Not a member of this conversation");
+      }
+
+      const call = await getCallForConversation(conversationId, callId);
+      if (!call) {
+        throw new NotFoundError("Call not found");
+      }
+
+      const media = await buildRecordingMedia(recordingId, callId);
+      if (!media) {
+        throw new NotFoundError("Recording media not found");
+      }
+
+      res.json(media);
+    }),
+  );
+
+  router.get(
+    "/annotation-profiles",
+    requireAuth,
+    asyncHandler(async (_req, res) => {
+      const profiles = await listAnnotationProfiles();
+      res.json({
+        profiles: profiles.map((profile) => ({
+          id: profile.id,
+          key: profile.key,
+          name: profile.name,
+          color: profile.color,
+          icon: profile.icon,
+          sortOrder: profile.sortOrder,
+        })),
+      });
+    }),
+  );
+
+  router.get(
+    "/conversations/:conversationId/calls/:callId/selections",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId, callId } = parseParams(
+        conversationCallParamsSchema,
+        req.params,
+      );
+      await requireCallMember(conversationId, callId, req.user!.userId);
+      const selections = await listCallSelections(callId);
+      res.json({ selections: selections.map(serializeSelection) });
+    }),
+  );
+
+  router.post(
+    "/conversations/:conversationId/calls/:callId/selections",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId, callId } = parseParams(
+        conversationCallParamsSchema,
+        req.params,
+      );
+      const body = parseBody(createSelectionSchema, req.body ?? {});
+      await requireCallMember(conversationId, callId, req.user!.userId);
+      try {
+        const selection = await createCallSelection({
+          callId,
+          conversationId,
+          createdBy: req.user!.userId,
+          startOffsetMs: body.startOffsetMs,
+          endOffsetMs: body.endOffsetMs,
+          userId: body.userId,
+        });
+        res.status(201).json(serializeSelection(selection));
+      } catch (error) {
+        throw mapAnnotationError(error);
+      }
+    }),
+  );
+
+  router.patch(
+    "/conversations/:conversationId/calls/:callId/selections/:selectionId",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId, callId, selectionId } = parseParams(
+        conversationCallSelectionParamsSchema,
+        req.params,
+      );
+      const body = parseBody(updateSelectionSchema, req.body ?? {});
+      await requireCallMember(conversationId, callId, req.user!.userId);
+      const existing = await getCallSelectionById(selectionId);
+      if (!existing || existing.callId !== callId) {
+        throw new NotFoundError("Selection not found");
+      }
+      try {
+        const selection = await updateCallSelection({
+          selectionId,
+          actorId: req.user!.userId,
+          startOffsetMs: body.startOffsetMs,
+          endOffsetMs: body.endOffsetMs,
+          userId: body.userId,
+        });
+        res.json(serializeSelection(selection));
+      } catch (error) {
+        throw mapAnnotationError(error);
+      }
+    }),
+  );
+
+  router.delete(
+    "/conversations/:conversationId/calls/:callId/selections/:selectionId",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId, callId, selectionId } = parseParams(
+        conversationCallSelectionParamsSchema,
+        req.params,
+      );
+      await requireCallMember(conversationId, callId, req.user!.userId);
+      const existing = await getCallSelectionById(selectionId);
+      if (!existing || existing.callId !== callId) {
+        throw new NotFoundError("Selection not found");
+      }
+      try {
+        await deleteCallSelection({
+          selectionId,
+          actorId: req.user!.userId,
+        });
+        res.status(204).send();
+      } catch (error) {
+        throw mapAnnotationError(error);
+      }
+    }),
+  );
+
+  router.get(
+    "/conversations/:conversationId/calls/:callId/annotations",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId, callId } = parseParams(
+        conversationCallParamsSchema,
+        req.params,
+      );
+      await requireCallMember(conversationId, callId, req.user!.userId);
+      const annotations = await listCallAnnotations(callId);
+      res.json({ annotations: annotations.map(serializeAnnotation) });
+    }),
+  );
+
+  router.post(
+    "/conversations/:conversationId/calls/:callId/annotations",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId, callId } = parseParams(
+        conversationCallParamsSchema,
+        req.params,
+      );
+      const body = parseBody(createAnnotationSchema, req.body ?? {});
+      await requireCallMember(conversationId, callId, req.user!.userId);
+      try {
+        const annotation = await createCallAnnotation({
+          callId,
+          conversationId,
+          createdBy: req.user!.userId,
+          profileId: body.profileId,
+          selectionId: body.selectionId,
+          startOffsetMs: body.startOffsetMs,
+          endOffsetMs: body.endOffsetMs,
+          userId: body.userId,
+        });
+        res.status(201).json(serializeAnnotation(annotation));
+      } catch (error) {
+        throw mapAnnotationError(error);
+      }
+    }),
+  );
+
+  router.patch(
+    "/conversations/:conversationId/calls/:callId/annotations/:annotationId",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId, callId, annotationId } = parseParams(
+        conversationCallAnnotationParamsSchema,
+        req.params,
+      );
+      const body = parseBody(updateAnnotationSchema, req.body ?? {});
+      await requireCallMember(conversationId, callId, req.user!.userId);
+      const existing = await getCallAnnotationById(annotationId);
+      if (!existing || existing.callId !== callId) {
+        throw new NotFoundError("Annotation not found");
+      }
+      try {
+        const annotation = await updateCallAnnotation({
+          annotationId,
+          actorId: req.user!.userId,
+          note: body.note,
+          selectionId: body.selectionId,
+        });
+        res.json(serializeAnnotation(annotation));
+      } catch (error) {
+        throw mapAnnotationError(error);
+      }
+    }),
+  );
+
+  router.delete(
+    "/conversations/:conversationId/calls/:callId/annotations/:annotationId",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId, callId, annotationId } = parseParams(
+        conversationCallAnnotationParamsSchema,
+        req.params,
+      );
+      await requireCallMember(conversationId, callId, req.user!.userId);
+      const existing = await getCallAnnotationById(annotationId);
+      if (!existing || existing.callId !== callId) {
+        throw new NotFoundError("Annotation not found");
+      }
+      try {
+        await deleteCallAnnotation({
+          annotationId,
+          actorId: req.user!.userId,
+        });
+        res.status(204).send();
+      } catch (error) {
+        throw mapAnnotationError(error);
+      }
+    }),
+  );
+
   app.use("/api/v1", router);
+}
+
+async function requireCallMember(
+  conversationId: string,
+  callId: string,
+  userId: string,
+): Promise<void> {
+  const conversation = await getConversationById(conversationId);
+  if (!conversation) {
+    throw new NotFoundError("Conversation not found");
+  }
+
+  const isMember = await isConversationMember(conversationId, userId);
+  if (!isMember) {
+    throw new ForbiddenError("Not a member of this conversation");
+  }
+
+  const call = await getCallById(callId);
+  if (!call || call.conversationId !== conversationId) {
+    throw new NotFoundError("Call not found");
+  }
+}
+
+function mapAnnotationError(error: unknown): never {
+  if (error instanceof AnnotationValidationError) {
+    if (error.message.endsWith("not found")) {
+      throw new NotFoundError(error.message);
+    }
+    throw new BadRequestError(error.message);
+  }
+
+  if (error instanceof AnnotationForbiddenError) {
+    throw new ForbiddenError(error.message);
+  }
+
+  if (error instanceof AnnotationConflictError) {
+    throw new ConflictError(error.message);
+  }
+
+  throw error;
 }
 
 function summarizeRecordings(

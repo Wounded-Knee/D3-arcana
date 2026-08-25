@@ -1,8 +1,15 @@
 import { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { AnnotationInspect } from '@/components/timeline/annotation-inspect';
 import { CallTimeline } from '@/components/timeline/call-timeline';
-import type { TimelineChunk, TimelineTrack } from '@/components/timeline/timeline-model';
+import type {
+  TimelineAnnotation,
+  TimelineAnnotationProfile,
+  TimelineChunk,
+  TimelineSelection,
+  TimelineTrack,
+} from '@/components/timeline/timeline-model';
 import {
   WAVEFORM_CHUNK_DURATION_MS,
   WAVEFORM_SAMPLE_INTERVAL_MS,
@@ -11,6 +18,15 @@ import {
 const SIMULATED_DURATION_MS = 60_000;
 const SAMPLES_PER_CHUNK = WAVEFORM_CHUNK_DURATION_MS / WAVEFORM_SAMPLE_INTERVAL_MS;
 const CHUNK_COUNT = Math.ceil(SIMULATED_DURATION_MS / WAVEFORM_CHUNK_DURATION_MS);
+
+const TEST_PROFILES: TimelineAnnotationProfile[] = [
+  { id: 'p-decision', key: 'decision', name: 'Decision', color: '#f59e0b', icon: 'gavel' },
+  { id: 'p-action', key: 'action', name: 'Action', color: '#38bdf8', icon: 'flag' },
+  { id: 'p-question', key: 'question', name: 'Question', color: '#c084fc', icon: 'help-outline' },
+  { id: 'p-agreement', key: 'agreement', name: 'Agreement', color: '#4ade80', icon: 'check-circle' },
+  { id: 'p-concern', key: 'concern', name: 'Concern', color: '#fb7185', icon: 'warning' },
+  { id: 'p-highlight', key: 'highlight', name: 'Highlight', color: '#facc15', icon: 'star' },
+];
 
 function createCallWindow() {
   const startedAtMs = Date.now();
@@ -77,6 +93,15 @@ export default function TimelineTestScreen() {
     setTracks((current) => current.slice(0, -1));
   }, []);
 
+  const [annotations, setAnnotations] = useState<TimelineAnnotation[]>([]);
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(
+    null,
+  );
+
+  const selectedAnnotation = annotations.find(
+    (item) => item.id === selectedAnnotationId,
+  );
+
   const header = (
     <View style={styles.header}>
       <View>
@@ -107,7 +132,76 @@ export default function TimelineTestScreen() {
         tracks={tracks}
         live={false}
         header={header}
+        profiles={TEST_PROFILES}
+        annotations={annotations}
+        selectedAnnotationId={selectedAnnotationId}
+        onSelectAnnotation={setSelectedAnnotationId}
+        onCreateAnnotation={(input) => {
+          const profile = TEST_PROFILES.find((item) => item.id === input.profileId);
+          if (!profile) {
+            return;
+          }
+          const id = `ann-${Date.now()}`;
+          const next: TimelineAnnotation = {
+            id,
+            profile,
+            note: null,
+            startMs: input.startMs,
+            endMs: input.endMs,
+            scope: input.userId
+              ? { kind: 'channel', userId: input.userId }
+              : { kind: 'all' },
+            selectionId: input.selection?.id ?? null,
+            createdBy: { id: 'local', displayName: 'You' },
+          };
+          setAnnotations((current) => [...current, next]);
+          setSelectedAnnotationId(id);
+        }}
+        onAttachSelection={(selection: TimelineSelection) => {
+          if (!selectedAnnotationId) {
+            return;
+          }
+          setAnnotations((current) =>
+            current.map((item) =>
+              item.id === selectedAnnotationId
+                ? {
+                    ...item,
+                    startMs: selection.startMs,
+                    endMs: selection.endMs,
+                    scope: selection.scope,
+                    selectionId: selection.id ?? item.selectionId,
+                  }
+                : item,
+            ),
+          );
+        }}
       />
+      {selectedAnnotation ? (
+        <AnnotationInspect
+          annotation={selectedAnnotation}
+          channelLabel={
+            selectedAnnotation.scope.kind === 'channel'
+              ? tracks.find((track) => track.userId === selectedAnnotation.scope.userId)
+                  ?.displayName ?? 'One channel'
+              : 'All channels'
+          }
+          canEdit
+          onChangeNote={(note) => {
+            setAnnotations((current) =>
+              current.map((item) =>
+                item.id === selectedAnnotation.id ? { ...item, note } : item,
+              ),
+            );
+          }}
+          onDismiss={() => setSelectedAnnotationId(null)}
+          onDelete={() => {
+            setAnnotations((current) =>
+              current.filter((item) => item.id !== selectedAnnotation.id),
+            );
+            setSelectedAnnotationId(null);
+          }}
+        />
+      ) : null}
     </View>
   );
 }

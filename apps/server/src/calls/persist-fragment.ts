@@ -44,6 +44,7 @@ export async function persistPcmFragment(options: {
       callId: options.recording.callId,
       userId: options.recording.userId,
       fragmentId: fragment.id,
+      recordingId: fragment.recordingId,
       callOffsetMs: fragment.callOffsetMs,
       durationMs: fragment.durationMs,
       playbackUrl,

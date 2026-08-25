@@ -9,6 +9,8 @@ export interface ObjectStore {
   ): string;
   objectKeyForFragment(sessionPrefix: string, callOffsetMs: number): string;
   put(key: string, body: Buffer, contentType: string): Promise<void>;
+  get(key: string): Promise<Buffer | null>;
+  exists(key: string): Promise<boolean>;
   issueReadUrl(key: string, expiresInSeconds: number): Promise<string>;
 }
 

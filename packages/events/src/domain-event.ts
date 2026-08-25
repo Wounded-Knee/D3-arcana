@@ -1,6 +1,14 @@
 import { z } from "zod";
 
 import {
+  annotationCreatedEventSchema,
+  annotationDeletedEventSchema,
+  annotationUpdatedEventSchema,
+  selectionCreatedEventSchema,
+  selectionDeletedEventSchema,
+  selectionUpdatedEventSchema,
+} from "./annotation.js";
+import {
   callEndedEventSchema,
   callParticipantJoinedEventSchema,
   callParticipantLeftEventSchema,
@@ -24,6 +32,12 @@ export const domainEventSchema = z.discriminatedUnion(
     callRecordingCompletedEventSchema,
     callRecordingFailedEventSchema,
     callRecordingRestoredEventSchema,
+    annotationCreatedEventSchema,
+    annotationUpdatedEventSchema,
+    annotationDeletedEventSchema,
+    selectionCreatedEventSchema,
+    selectionUpdatedEventSchema,
+    selectionDeletedEventSchema,
   ],
 );
 
