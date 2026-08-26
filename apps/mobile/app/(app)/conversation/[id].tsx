@@ -34,6 +34,10 @@ import type { RecordingSegment } from '@/lib/call/playback-types';
 import { WaveformSampler } from '@/lib/call/waveform-sampler';
 import type { CallParticipantInfo } from '@/lib/call/types';
 import { resolveCallMediaUrl } from '@/lib/config';
+import {
+  consumePendingDevCallJoin,
+  setDevInCall,
+} from '@/lib/dev/user-switcher';
 import { isExpoGo } from '@/lib/expo-go';
 import {
   createCallAnnotation,
@@ -170,6 +174,7 @@ export default function ConversationScreen() {
   >(null);
   const callSessionRef = useRef<CallSession | null>(null);
   const callIdRef = useRef<string | null>(null);
+  const autoJoinAttemptedRef = useRef(false);
 
   const conversationId = id ?? '';
   callIdRef.current = callId;
@@ -663,6 +668,13 @@ export default function ConversationScreen() {
     };
   }, []);
 
+  useEffect(() => {
+    setDevInCall(inCall);
+    return () => {
+      setDevInCall(false);
+    };
+  }, [inCall]);
+
   async function handleJoinCall() {
     if (!token || !conversationId || isJoiningCall) {
       return;
@@ -725,6 +737,20 @@ export default function ConversationScreen() {
       setIsJoiningCall(false);
     }
   }
+
+  useEffect(() => {
+    if (!token || !conversationId || autoJoinAttemptedRef.current) {
+      return;
+    }
+
+    if (!consumePendingDevCallJoin()) {
+      autoJoinAttemptedRef.current = true;
+      return;
+    }
+
+    autoJoinAttemptedRef.current = true;
+    void handleJoinCall();
+  }, [conversationId, token]);
 
   async function handleLeaveCall() {
     if (!token || !conversationId) {

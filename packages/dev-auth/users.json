@@ -1,0 +1,10 @@
+{
+  "conversationName": "Bridge Discussion",
+  "users": [
+    { "key": "alice", "displayName": "Alice", "token": "dev-alice" },
+    { "key": "bob", "displayName": "Bob", "token": "dev-bob" },
+    { "key": "carol", "displayName": "Carol", "token": "dev-carol" },
+    { "key": "dave", "displayName": "Dave", "token": "dev-dave" },
+    { "key": "eve", "displayName": "Eve", "token": "dev-eve" }
+  ]
+}

@@ -13,8 +13,10 @@ export default function AppLayout() {
 
   return (
     <View style={styles.container}>
-      <AppTopBar />
-      <Stack screenOptions={{ headerShown: false }} />
+      <View style={styles.topBar}>
+        <AppTopBar />
+      </View>
+      <Stack key={user.id} screenOptions={{ headerShown: false }} />
     </View>
   );
 }
@@ -23,5 +25,9 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#0f172a',
+  },
+  topBar: {
+    zIndex: 20,
+    elevation: 8,
   },
 });

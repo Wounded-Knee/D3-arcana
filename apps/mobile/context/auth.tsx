@@ -19,10 +19,30 @@ interface AuthContextValue {
   isLoading: boolean;
   error: string | null;
   signIn: (token: string) => Promise<void>;
+  switchUser: (token: string) => Promise<void>;
   signOut: () => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+async function connectRealtime(token: string): Promise<RealtimeClient> {
+  const client = new RealtimeClient(token);
+  try {
+    await Promise.race([
+      client.connect(),
+      new Promise<never>((_, reject) => {
+        setTimeout(
+          () => reject(new Error('WebSocket connection timed out')),
+          REALTIME_TIMEOUT_MS,
+        );
+      }),
+    ]);
+    return client;
+  } catch (err) {
+    client.disconnect();
+    throw err;
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(null);
@@ -45,17 +65,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     try {
       const currentUser = await fetchCurrentUser(nextToken);
-      const client = new RealtimeClient(nextToken);
-      await Promise.race([
-        client.connect(),
-        new Promise<never>((_, reject) => {
-          setTimeout(
-            () => reject(new Error('WebSocket connection timed out')),
-            REALTIME_TIMEOUT_MS,
-          );
-        }),
-      ]);
-
+      const client = await connectRealtime(nextToken);
+      realtime?.disconnect();
       setToken(nextToken);
       setUser(currentUser);
       setRealtime(client);
@@ -77,7 +88,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  }, [signOut]);
+  }, [realtime]);
+
+  const switchUser = useCallback(async (nextToken: string) => {
+    if (nextToken === token) {
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    let nextClient: RealtimeClient | null = null;
+
+    try {
+      const currentUser = await fetchCurrentUser(nextToken);
+      nextClient = await connectRealtime(nextToken);
+      realtime?.disconnect();
+      setToken(nextToken);
+      setUser(currentUser);
+      setRealtime(nextClient);
+    } catch (err) {
+      nextClient?.disconnect();
+
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Switch user failed';
+
+      setError(message);
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [realtime, token]);
 
   const value = useMemo(
     () => ({
@@ -87,9 +132,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       error,
       signIn,
+      switchUser,
       signOut,
     }),
-    [token, user, realtime, isLoading, error, signIn, signOut],
+    [token, user, realtime, isLoading, error, signIn, switchUser, signOut],
   );
 
   return (

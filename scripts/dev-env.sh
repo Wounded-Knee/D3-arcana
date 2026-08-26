@@ -8,46 +8,47 @@ set -a
 source "$ROOT_DIR/apps/server/.env"
 set +a
 
-export ALICE_ID="$(
-  psql "$DATABASE_URL" -Atc "
-    SELECT id
-    FROM users
-    WHERE display_name = 'Alice'
-    ORDER BY created_at
-    LIMIT 1;
-  "
-)"
+eval "$(node "$ROOT_DIR/scripts/dev-users.mjs" --shell)"
 
-export BOB_ID="$(
-  psql "$DATABASE_URL" -Atc "
-    SELECT id
-    FROM users
-    WHERE display_name = 'Bob'
-    ORDER BY created_at
-    LIMIT 1;
-  "
-)"
+first_key=""
+for key in $DEV_SEED_KEYS; do
+  key_upper="${key^^}"
+  display_var="${key_upper}_DISPLAY_NAME"
+  display_name="${!display_var}"
+  id="$(
+    psql "$DATABASE_URL" -Atc "
+      SELECT id
+      FROM users
+      WHERE display_name = '${display_name//\'/\'\'}'
+      ORDER BY created_at
+      LIMIT 1;
+    "
+  )"
+  export "${key_upper}_ID=$id"
+
+  if [[ -z "$first_key" ]]; then
+    first_key="$key"
+    if [[ -z "$id" ]]; then
+      echo "ERROR: ${display_name} was not found. Run: pnpm --filter server db:seed" >&2
+      return 1 2>/dev/null || exit 1
+    fi
+  elif [[ -z "$id" ]]; then
+    echo "WARNING: ${display_name} was not found. Run: pnpm --filter server db:seed" >&2
+  fi
+done
 
 export CONVERSATION_ID="$(
   psql "$DATABASE_URL" -Atc "
     SELECT id
     FROM conversations
-    WHERE name = 'Bridge Discussion'
+    WHERE name = '${DEV_CONVERSATION_NAME//\'/\'\'}'
     ORDER BY created_at
     LIMIT 1;
   "
 )"
 
-export ALICE_TOKEN="dev-alice"
-export BOB_TOKEN="dev-bob"
-
-if [[ -z "$ALICE_ID" ]]; then
-  echo "ERROR: Alice was not found. Run: pnpm --filter server db:seed" >&2
-  return 1 2>/dev/null || exit 1
-fi
-
 if [[ -z "$CONVERSATION_ID" ]]; then
-  echo "ERROR: Bridge Discussion was not found. Run: pnpm --filter server db:seed" >&2
+  echo "ERROR: ${DEV_CONVERSATION_NAME} was not found. Run: pnpm --filter server db:seed" >&2
   return 1 2>/dev/null || exit 1
 fi
 
@@ -56,11 +57,14 @@ if [[ -z "${DEV_AUTH_TOKENS:-}" ]]; then
 fi
 
 echo "Development environment loaded:"
-echo "  ALICE_ID=$ALICE_ID"
-echo "  BOB_ID=${BOB_ID:-<not seeded>}"
+for key in $DEV_SEED_KEYS; do
+  key_upper="${key^^}"
+  id_var="${key_upper}_ID"
+  token_var="${key_upper}_TOKEN"
+  echo "  ${id_var}=${!id_var:-<not seeded>}"
+  echo "  ${token_var}=${!token_var}"
+done
 echo "  CONVERSATION_ID=$CONVERSATION_ID"
-echo "  ALICE_TOKEN=$ALICE_TOKEN"
-echo "  BOB_TOKEN=$BOB_TOKEN"
 echo ""
 echo "Example:"
 echo "  curl -H \"Authorization: Bearer $ALICE_TOKEN\" http://localhost:3000/api/v1/users/$ALICE_ID/conversations"

@@ -4,13 +4,15 @@ import {
   ActivityIndicator,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { DEV_SEED_USERS } from '@d3-arcana/dev-auth';
 
 import { useAuth } from '@/context/auth';
-import { getApiBaseUrl, DEV_TOKENS } from '@/lib/config';
+import { getApiBaseUrl } from '@/lib/config';
 
 export default function LoginScreen() {
   const { user, signIn, isLoading, error } = useAuth();
@@ -38,42 +40,42 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <Text style={styles.title}>D3 Arcana</Text>
-      <Text style={styles.subtitle}>
-        Development sign-in using opaque bearer tokens.
-      </Text>
-      <Text style={styles.apiUrl}>API: {apiBaseUrl}</Text>
-      <Text style={styles.hint}>
-        This host comes from Metro (--lan). Restart Metro after a network
-        change. Set EXPO_PUBLIC_API_URL only if you need to override it.
-      </Text>
-
-      <Pressable
-        style={styles.button}
-        disabled={isLoading}
-        onPress={() => handleSignIn(DEV_TOKENS.alice, 'Alice')}>
-        <Text style={styles.buttonText}>
-          {pending === 'Alice' ? 'Signing in…' : 'Sign in as Alice'}
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled">
+        <Text style={styles.title}>D3 Arcana</Text>
+        <Text style={styles.subtitle}>
+          Development sign-in using opaque bearer tokens.
         </Text>
-      </Pressable>
-
-      <Pressable
-        style={styles.button}
-        disabled={isLoading}
-        onPress={() => handleSignIn(DEV_TOKENS.bob, 'Bob')}>
-        <Text style={styles.buttonText}>
-          {pending === 'Bob' ? 'Signing in…' : 'Sign in as Bob'}
+        <Text style={styles.apiUrl}>API: {apiBaseUrl}</Text>
+        <Text style={styles.hint}>
+          This host comes from Metro (--lan). Restart Metro after a network
+          change. Set EXPO_PUBLIC_API_URL only if you need to override it.
         </Text>
-      </Pressable>
 
-      <Link href={'/timeline-test' as Href} asChild>
-        <Pressable style={StyleSheet.flatten([styles.button, styles.testButton])}>
-          <Text style={styles.buttonText}>Timeline Test</Text>
-        </Pressable>
-      </Link>
+        {DEV_SEED_USERS.map((seedUser) => (
+          <Pressable
+            key={seedUser.key}
+            style={styles.button}
+            disabled={isLoading}
+            onPress={() => handleSignIn(seedUser.token, seedUser.displayName)}>
+            <Text style={styles.buttonText}>
+              {pending === seedUser.displayName
+                ? 'Signing in…'
+                : `Sign in as ${seedUser.displayName}`}
+            </Text>
+          </Pressable>
+        ))}
 
-      {isLoading ? <ActivityIndicator style={styles.spinner} /> : null}
-      {error ? <Text style={styles.error}>{error}</Text> : null}
+        <Link href={'/timeline-test' as Href} asChild>
+          <Pressable style={StyleSheet.flatten([styles.button, styles.testButton])}>
+            <Text style={styles.buttonText}>Timeline Test</Text>
+          </Pressable>
+        </Link>
+
+        {isLoading ? <ActivityIndicator style={styles.spinner} /> : null}
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -81,10 +83,13 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#0f172a',
+  },
+  content: {
+    flexGrow: 1,
     justifyContent: 'center',
     padding: 24,
     gap: 16,
-    backgroundColor: '#0f172a',
   },
   title: {
     fontSize: 32,

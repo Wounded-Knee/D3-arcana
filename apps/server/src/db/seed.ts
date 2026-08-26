@@ -1,6 +1,10 @@
 import "dotenv/config";
 
 import { eq } from "drizzle-orm";
+import {
+  DEV_CONVERSATION_NAME,
+  DEV_SEED_USERS,
+} from "@d3-arcana/dev-auth";
 
 import { db, pool } from "../database.js";
 import {
@@ -10,9 +14,6 @@ import {
 } from "./schema.js";
 import { createConversation } from "../repositories/conversations.js";
 import { createUser } from "../repositories/users.js";
-
-const ALICE_TOKEN = "dev-alice";
-const BOB_TOKEN = "dev-bob";
 
 async function findUserByDisplayName(displayName: string) {
   const [user] = await db
@@ -35,54 +36,61 @@ async function findConversationByName(name: string) {
 }
 
 async function seed() {
-  let alice = await findUserByDisplayName("Alice");
-  if (!alice) {
-    alice = await createUser("Alice");
-    console.log(`Created user Alice (${alice.id})`);
-  } else {
-    console.log(`User Alice already exists (${alice.id})`);
+  const seededUsers: Array<
+    (typeof DEV_SEED_USERS)[number] & { id: string }
+  > = [];
+
+  for (const seedUser of DEV_SEED_USERS) {
+    let user = await findUserByDisplayName(seedUser.displayName);
+    if (!user) {
+      user = await createUser(seedUser.displayName);
+      console.log(`Created user ${seedUser.displayName} (${user.id})`);
+    } else {
+      console.log(
+        `User ${seedUser.displayName} already exists (${user.id})`,
+      );
+    }
+
+    seededUsers.push({ ...seedUser, id: user.id });
   }
 
-  let bob = await findUserByDisplayName("Bob");
-  if (!bob) {
-    bob = await createUser("Bob");
-    console.log(`Created user Bob (${bob.id})`);
-  } else {
-    console.log(`User Bob already exists (${bob.id})`);
+  const creator = seededUsers[0];
+  if (!creator) {
+    throw new Error("DEV_SEED_USERS must contain at least one user");
   }
 
-  let conversation = await findConversationByName("Bridge Discussion");
+  let conversation = await findConversationByName(DEV_CONVERSATION_NAME);
   if (!conversation) {
     conversation = await createConversation(
-      "Bridge Discussion",
-      alice.id,
+      DEV_CONVERSATION_NAME,
+      creator.id,
     );
     console.log(
-      `Created conversation Bridge Discussion (${conversation.id})`,
+      `Created conversation ${DEV_CONVERSATION_NAME} (${conversation.id})`,
     );
   } else {
     console.log(
-      `Conversation Bridge Discussion already exists (${conversation.id})`,
+      `Conversation ${DEV_CONVERSATION_NAME} already exists (${conversation.id})`,
     );
   }
 
-  const bobMembership = await db
+  const membership = await db
     .select()
     .from(conversationMembers)
-    .where(
-      eq(conversationMembers.conversationId, conversation.id),
-    );
+    .where(eq(conversationMembers.conversationId, conversation.id));
 
-  const bobIsMember = bobMembership.some(
-    (member) => member.userId === bob.id,
-  );
+  const memberIds = new Set(membership.map((member) => member.userId));
 
-  if (!bobIsMember) {
+  for (const user of seededUsers) {
+    if (memberIds.has(user.id)) {
+      continue;
+    }
+
     await db.insert(conversationMembers).values({
       conversationId: conversation.id,
-      userId: bob.id,
+      userId: user.id,
     });
-    console.log("Added Bob to Bridge Discussion");
+    console.log(`Added ${user.displayName} to ${DEV_CONVERSATION_NAME}`);
   }
 
   console.log("");
@@ -91,16 +99,19 @@ async function seed() {
   const { buildDevAuthTokens, writeDevAuthTokensToEnv } = await import(
     "./sync-auth-tokens.js"
   );
-  const devAuthTokens = buildDevAuthTokens(alice.id, bob.id);
+  const devAuthTokens = buildDevAuthTokens(
+    seededUsers.map((user) => ({ token: user.token, userId: user.id })),
+  );
   writeDevAuthTokensToEnv(devAuthTokens);
 
   console.log(`DEV_AUTH_TOKENS=${devAuthTokens}`);
   console.log("");
   console.log("Development tokens:");
-  console.log(`  ALICE_TOKEN=${ALICE_TOKEN}`);
-  console.log(`  BOB_TOKEN=${BOB_TOKEN}`);
-  console.log(`  ALICE_ID=${alice.id}`);
-  console.log(`  BOB_ID=${bob.id}`);
+  for (const user of seededUsers) {
+    const env = user.key.toUpperCase();
+    console.log(`  ${env}_TOKEN=${user.token}`);
+    console.log(`  ${env}_ID=${user.id}`);
+  }
   console.log(`  CONVERSATION_ID=${conversation.id}`);
 }
 

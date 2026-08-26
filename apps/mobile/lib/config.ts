@@ -114,8 +114,3 @@ export function resolveCallMediaUrl(issuedUrl: string): string {
 
 /** @deprecated Use getApiBaseUrl() — resolved lazily at call time. */
 export const API_BASE_URL = getApiBaseUrl();
-
-export const DEV_TOKENS = {
-  alice: 'dev-alice',
-  bob: 'dev-bob',
-} as const;

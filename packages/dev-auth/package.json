@@ -1,0 +1,11 @@
+{
+  "name": "@d3-arcana/dev-auth",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Development seed users and opaque bearer tokens",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./users.json": "./users.json"
+  }
+}

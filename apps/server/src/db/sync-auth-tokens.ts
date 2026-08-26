@@ -5,12 +5,10 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { eq } from "drizzle-orm";
+import { DEV_SEED_USERS } from "@d3-arcana/dev-auth";
 
 import { db, pool } from "../database.js";
 import { users } from "./schema.js";
-
-const ALICE_TOKEN = "dev-alice";
-const BOB_TOKEN = "dev-bob";
 
 const ENV_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -28,10 +26,9 @@ async function findUserId(displayName: string): Promise<string | null> {
 }
 
 export function buildDevAuthTokens(
-  aliceId: string,
-  bobId: string,
+  entries: Array<{ token: string; userId: string }>,
 ): string {
-  return `${ALICE_TOKEN}:${aliceId},${BOB_TOKEN}:${bobId}`;
+  return entries.map((entry) => `${entry.token}:${entry.userId}`).join(",");
 }
 
 export function writeDevAuthTokensToEnv(tokens: string): void {
@@ -61,16 +58,26 @@ export function writeDevAuthTokensToEnv(tokens: string): void {
 }
 
 async function syncAuthTokens(): Promise<string> {
-  const aliceId = await findUserId("Alice");
-  const bobId = await findUserId("Bob");
+  const entries: Array<{ token: string; userId: string }> = [];
+  const missing: string[] = [];
 
-  if (!aliceId || !bobId) {
+  for (const seedUser of DEV_SEED_USERS) {
+    const userId = await findUserId(seedUser.displayName);
+    if (!userId) {
+      missing.push(seedUser.displayName);
+      continue;
+    }
+
+    entries.push({ token: seedUser.token, userId });
+  }
+
+  if (missing.length > 0) {
     throw new Error(
-      "Alice and Bob must exist. Run `pnpm --filter server db:seed` first.",
+      `${missing.join(", ")} must exist. Run \`pnpm --filter server db:seed\` first.`,
     );
   }
 
-  const tokens = buildDevAuthTokens(aliceId, bobId);
+  const tokens = buildDevAuthTokens(entries);
   writeDevAuthTokensToEnv(tokens);
 
   return tokens;

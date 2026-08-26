@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^13.0.0",
+    "@d3-arcana/dev-auth": "workspace:*",
     "@d3-arcana/events": "workspace:*",
     "@d3-arcana/protocol": "workspace:*",
     "@expo/vector-icons": "^15.0.3",

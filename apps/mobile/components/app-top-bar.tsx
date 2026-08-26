@@ -3,6 +3,9 @@ import { usePathname, useRouter, type Href } from 'expo-router';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { DevUserSwitcher } from '@/components/dev-user-switcher';
+import { isDevUserSwitcherEnabled } from '@/lib/dev/user-switcher';
+
 const NESTED_PREFIXES = ['/conversation', '/notifications', '/settings'];
 
 function isNestedRoute(pathname: string): boolean {
@@ -58,6 +61,7 @@ export function AppTopBar() {
           ) : null}
         </View>
         <View style={styles.actions}>
+          {isDevUserSwitcherEnabled() ? <DevUserSwitcher /> : null}
           <IconButton
             name="notifications"
             label="Notifications"
@@ -79,6 +83,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#0f172a',
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#1e293b',
+    zIndex: 20,
+    elevation: 8,
+    overflow: 'visible',
   },
   row: {
     minHeight: 44,
@@ -86,6 +93,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    overflow: 'visible',
+    zIndex: 20,
   },
   side: {
     minWidth: 44,
@@ -95,6 +104,8 @@ const styles = StyleSheet.create({
   actions: {
     flexDirection: 'row',
     alignItems: 'center',
+    overflow: 'visible',
+    zIndex: 20,
   },
   iconButton: {
     width: 44,
