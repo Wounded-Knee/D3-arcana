@@ -9,7 +9,7 @@ import {
   amplitudeAtIndexed,
   indexChunks,
   isInSessionRanges,
-  maxAmplitudeInRangeIndexed,
+  meanAmplitudeInRangeIndexed,
   sessionRanges,
   type TimelineChunk,
   type TimelineSession,
@@ -62,7 +62,7 @@ function buildWaveformPaths(
     const amplitude =
       rangeMs <= WAVEFORM_SAMPLE_INTERVAL_MS
         ? amplitudeAtIndexed(index, startMs)
-        : maxAmplitudeInRangeIndexed(index, startMs, endMs);
+        : meanAmplitudeInRangeIndexed(index, startMs, endMs);
     const barExtent = Math.max(1, (amplitude / 255) * maxBarExtent);
     const segment = vertical
       ? `M${mid - barExtent} ${along}h${barExtent * 2}v${barThickness}h${-barExtent * 2}z`

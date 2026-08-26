@@ -278,15 +278,15 @@ export function amplitudeAtIndexed(
   return amplitudes[sampleIndex] ?? 0;
 }
 
-export function maxAmplitudeInRange(
+export function meanAmplitudeInRange(
   chunks: TimelineChunk[],
   startMs: number,
   endMs: number,
 ): number {
-  return maxAmplitudeInRangeIndexed(indexChunks(chunks), startMs, endMs);
+  return meanAmplitudeInRangeIndexed(indexChunks(chunks), startMs, endMs);
 }
 
-export function maxAmplitudeInRangeIndexed(
+export function meanAmplitudeInRangeIndexed(
   index: ChunkIndex,
   startMs: number,
   endMs: number,
@@ -295,7 +295,8 @@ export function maxAmplitudeInRangeIndexed(
     return 0;
   }
 
-  let max = 0;
+  let sum = 0;
+  let count = 0;
   const firstChunk = chunkStartForOffset(Math.max(0, startMs));
   const lastChunk = chunkStartForOffset(Math.max(0, endMs - 1));
 
@@ -320,15 +321,10 @@ export function maxAmplitudeInRangeIndexed(
     );
 
     for (; sampleIndex <= lastIndex; sampleIndex += 1) {
-      const value = amplitudes[sampleIndex] ?? 0;
-      if (value > max) {
-        max = value;
-      }
-      if (max === 255) {
-        return 255;
-      }
+      sum += amplitudes[sampleIndex] ?? 0;
+      count += 1;
     }
   }
 
-  return max;
+  return count === 0 ? 0 : Math.round(sum / count);
 }

@@ -57,24 +57,30 @@ export function ProfilePickerButton({
   }, [choose]);
 
   const hold = useMemo(
-    () =>
-      Gesture.Pan()
+    () => {
+      'use no memo';
+      return Gesture.Pan()
         .activateAfterLongPress(280)
         .enabled(!disabled)
         .onStart(() => {
+          'worklet';
           runOnJS(show)();
         })
         .onUpdate((event) => {
+          'worklet';
           runOnJS(updateHighlight)(Math.max(0, event.translationY));
         })
         .onEnd(() => {
+          'worklet';
           runOnJS(finishHold)();
         })
         .onFinalize((event) => {
+          'worklet';
           if (event.state !== 5) {
             runOnJS(hide)();
           }
-        }),
+        });
+    },
     [disabled, finishHold, hide, show, updateHighlight],
   );
 

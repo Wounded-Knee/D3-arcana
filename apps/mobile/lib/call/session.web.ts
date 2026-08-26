@@ -11,7 +11,7 @@ import type {
   CallSession,
   CallSessionListener,
 } from './types';
-import { startAudioLevelLoop } from './audio-level-loop';
+import { startMicAudioLevelLoop } from './audio-level-loop';
 
 export class WebCallSession implements CallSession {
   private room: Room | null = null;
@@ -150,8 +150,13 @@ export class WebCallSession implements CallSession {
 
   private startAudioLevels(): void {
     this.stopAudioLevels();
-    this.stopAudioLevelLoop = startAudioLevelLoop(
-      () => (this.muted ? 0 : (this.room?.localParticipant.audioLevel ?? 0)),
+    if (!this.room) {
+      return;
+    }
+
+    this.stopAudioLevelLoop = startMicAudioLevelLoop(
+      this.room,
+      () => this.muted,
       this.listeners,
     );
   }

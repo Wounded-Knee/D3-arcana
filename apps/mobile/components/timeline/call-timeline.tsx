@@ -33,7 +33,6 @@ import {
   followPlayheadViewStart,
   OVERSCAN_PX,
 } from './timeline-math';
-import { panLog } from './timeline-debug';
 import type {
   ChannelScope,
   TimelineAnnotation,
@@ -178,7 +177,6 @@ export function CallTimeline({
   });
   const selectionRef = useRef<TimelineSelection | null>(null);
   selectionRef.current = selection;
-  const panSampleSv = useSharedValue(0);
   const tracksDuringPanRef = useRef(tracks);
   const pinchOriginSv = useSharedValue({
     viewStartMs: 0,
@@ -271,12 +269,6 @@ export function CallTimeline({
     const liveViewStart = viewStartSv.value;
     const nextShiftPx = (viewStartMs - liveViewStart) / perPx;
     if (gesturingRef.current) {
-      panLog('react.syncViewStart', {
-        gesturing: true,
-        viewStartMs: Math.round(viewStartMs),
-        liveViewStart: Math.round(liveViewStart),
-        nextShiftPx: Math.round(nextShiftPx * 10) / 10,
-      });
       contentShiftPx.value = nextShiftPx;
       return;
     }
@@ -338,19 +330,6 @@ export function CallTimeline({
 
     const timer = setInterval(() => {
       const nextNow = Math.max(0, Date.now() - startedAtMs);
-      const dragging = gesturingRef.current;
-      if (dragging) {
-        panLog('timer.live100ms', {
-          gesturing: true,
-          followLive: followLiveRef.current,
-          setNowMs: true,
-          skippedViewFollow:
-            !followLiveRef.current ||
-            paneSize <= 0 ||
-            playingRef.current,
-          nowMs: Math.round(nextNow),
-        });
-      }
       setNowMs(nextNow);
       nowSv.value = nextNow;
 
@@ -433,57 +412,27 @@ export function CallTimeline({
     }
 
     if (tracksDuringPanRef.current !== tracks) {
-      panLog('react.tracksChangedDuringPan', {
-        trackCount: tracks.length,
-      });
       tracksDuringPanRef.current = tracks;
     }
   }, [tracks]);
 
-  const commitViewStart = useCallback((nextStart: number, immediate: boolean, reason: string) => {
+  const commitViewStart = useCallback((nextStart: number, immediate: boolean) => {
     pendingViewStartRef.current = nextStart;
-    const quiet = reason === 'playhead';
     if (immediate) {
       if (viewCommitTimer.current) {
         clearTimeout(viewCommitTimer.current);
         viewCommitTimer.current = null;
-      }
-      if (!quiet) {
-        panLog('commit.immediate', {
-          reason,
-          nextStart: Math.round(nextStart),
-        });
       }
       setViewStartMs(nextStart);
       return;
     }
 
     if (viewCommitTimer.current) {
-      if (!quiet) {
-        panLog('commit.throttleSkip', {
-          reason,
-          nextStart: Math.round(nextStart),
-          pending: Math.round(pendingViewStartRef.current),
-        });
-      }
       return;
     }
 
-    if (!quiet) {
-      panLog('commit.throttleSchedule', {
-        reason,
-        nextStart: Math.round(nextStart),
-        delayMs: VIEW_COMMIT_MS,
-      });
-    }
     viewCommitTimer.current = setTimeout(() => {
       viewCommitTimer.current = null;
-      if (!quiet) {
-        panLog('commit.throttleFire', {
-          reason,
-          nextStart: Math.round(pendingViewStartRef.current),
-        });
-      }
       setViewStartMs(pendingViewStartRef.current);
     }, VIEW_COMMIT_MS);
   }, []);
@@ -515,7 +464,7 @@ export function CallTimeline({
 
     viewStartSv.value = nextStart;
     contentShiftPx.value = (committedViewStartSv.value - nextStart) / perPx;
-    commitViewStart(nextStart, false, 'playhead');
+    commitViewStart(nextStart, false);
   }, [
     commitViewStart,
     committedViewStartSv,
@@ -529,21 +478,17 @@ export function CallTimeline({
 
   const stopPlaybackView = useCallback(() => {
     contentShiftPx.value = 0;
-    commitViewStart(viewStartSv.value, true, 'playback-stop');
+    commitViewStart(viewStartSv.value, true);
   }, [commitViewStart, contentShiftPx, viewStartSv]);
 
   const setGesturing = useCallback((value: boolean) => {
     gesturingRef.current = value;
-    panLog(value ? 'gesture.begin' : 'gesture.flagOff', {
-      followLive: followLiveRef.current,
-    });
   }, []);
 
   const handleFollowLiveChange = useCallback((nextFollow: boolean) => {
     if (followLiveRef.current === nextFollow) {
       return;
     }
-    panLog('react.followLive', { nextFollow });
     setFollowLive(nextFollow);
     if (nextFollow) {
       const liveMs = nowSv.value;
@@ -555,12 +500,8 @@ export function CallTimeline({
 
   const handlePanEnd = useCallback(
     (nextStart: number, nextFollow: boolean) => {
-      panLog('gesture.end', {
-        nextStart: Math.round(nextStart),
-        nextFollow,
-      });
       gesturingRef.current = false;
-      commitViewStart(nextStart, true, 'pan-end');
+      commitViewStart(nextStart, true);
       handleFollowLiveChange(nextFollow);
     },
     [commitViewStart, handleFollowLiveChange],
@@ -647,7 +588,7 @@ export function CallTimeline({
   const handlePinchCommit = useCallback(
     (nextMsPerPixel: number, nextStart: number) => {
       setMsPerPixel(nextMsPerPixel);
-      commitViewStart(nextStart, false, 'pinch');
+      commitViewStart(nextStart, false);
       setFollowLive(false);
     },
     [commitViewStart],
@@ -657,7 +598,7 @@ export function CallTimeline({
     (nextMsPerPixel: number, nextStart: number) => {
       gesturingRef.current = false;
       setMsPerPixel(nextMsPerPixel);
-      commitViewStart(nextStart, true, 'pinch-end');
+      commitViewStart(nextStart, true);
     },
     [commitViewStart],
   );
@@ -739,38 +680,20 @@ export function CallTimeline({
     vertical,
   ]);
 
-  const handlePanSample = useCallback(
-    (
-      translationX: number,
-      nextStart: number,
-      committed: number,
-      shiftPx: number,
-      frame: number,
-    ) => {
-      panLog('worklet.panSample', {
-        frame,
-        translationX: Math.round(translationX),
-        nextStart: Math.round(nextStart),
-        committed: Math.round(committed),
-        shiftPx: Math.round(shiftPx * 10) / 10,
-      });
-    },
-    [],
-  );
-
   const handleSolo = useCallback((userId: string) => {
     setSoloUserId((current) => (current === userId ? null : userId));
   }, []);
 
   const pan = useMemo(
     () => {
+      'use no memo';
       const gesture = vertical
         ? Gesture.Pan().activeOffsetY([-8, 8])
         : Gesture.Pan().activeOffsetX([-8, 8]);
       return gesture
         .onBegin((event) => {
+          'worklet';
           runOnJS(setGesturing)(true);
-          panSampleSv.value = 0;
           const last = lastSelectionSv.value;
           const perPx = msPerPixelSv.value || 1;
           const alongStart =
@@ -819,6 +742,7 @@ export function CallTimeline({
           };
         })
         .onUpdate((event) => {
+          'worklet';
           const origin = panOriginSv.value;
           const pane = paneSizeSv.value;
           if (pane <= 0) {
@@ -887,16 +811,6 @@ export function CallTimeline({
           const shiftPx =
             (committedViewStartSv.value - nextStart) / origin.msPerPixel;
           contentShiftPx.value = shiftPx;
-          panSampleSv.value += 1;
-          if (panSampleSv.value % 12 === 0) {
-            runOnJS(handlePanSample)(
-              translation,
-              nextStart,
-              committedViewStartSv.value,
-              shiftPx,
-              panSampleSv.value,
-            );
-          }
           const nextFollow =
             liveSv.value === 1 &&
             nextStart + viewportMs >= nowSv.value - LIVE_EDGE_MS
@@ -908,6 +822,7 @@ export function CallTimeline({
           }
         })
         .onEnd(() => {
+          'worklet';
           const origin = panOriginSv.value;
           if (origin.mode === 1 || origin.mode === 2 || origin.mode === 3) {
             const last = lastSelectionSv.value;
@@ -936,7 +851,6 @@ export function CallTimeline({
       followLiveSv,
       handleFollowLiveChange,
       handlePanEnd,
-      handlePanSample,
       handleSelectionDrag,
       handleSelectionGestureEnd,
       lastSelectionSv,
@@ -944,7 +858,6 @@ export function CallTimeline({
       msPerPixelSv,
       nowSv,
       panOriginSv,
-      panSampleSv,
       rulerCross,
       selectingSv,
       setGesturing,
@@ -957,9 +870,11 @@ export function CallTimeline({
   );
 
   const pinch = useMemo(
-    () =>
-      Gesture.Pinch()
+    () => {
+      'use no memo';
+      return Gesture.Pinch()
         .onBegin((event) => {
+          'worklet';
           runOnJS(setGesturing)(true);
           const focalAlong = vertical ? event.focalY : event.focalX;
           pinchOriginSv.value = {
@@ -969,6 +884,7 @@ export function CallTimeline({
           };
         })
         .onUpdate((event) => {
+          'worklet';
           const pane = paneSizeSv.value;
           if (pane <= 0 || event.scale <= 0) {
             return;
@@ -992,8 +908,10 @@ export function CallTimeline({
           runOnJS(handlePinchCommit)(nextMsPerPixel, nextStart);
         })
         .onEnd(() => {
+          'worklet';
           runOnJS(handlePinchEnd)(msPerPixelSv.value, viewStartSv.value);
-        }),
+        });
+    },
     [
       contentShiftPx,
       durationSv,
@@ -1010,11 +928,14 @@ export function CallTimeline({
   );
 
   const tap = useMemo(
-    () =>
-      Gesture.Tap()
+    () => {
+      'use no memo';
+      return Gesture.Tap()
         .onEnd((event) => {
+          'worklet';
           runOnJS(handleTapSeek)(event.x, event.y);
-        }),
+        });
+    },
     [handleTapSeek],
   );
 

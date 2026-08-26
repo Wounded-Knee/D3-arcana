@@ -15,12 +15,37 @@ export function alignOffsetMs(offsetMs: number): number {
   );
 }
 
-export function quantizeAmplitude(level: number): number {
-  if (!Number.isFinite(level)) {
+export const WAVEFORM_RANGE_WINDOW = 40;
+export const WAVEFORM_PAUSE_WINDOW = 12;
+export const WAVEFORM_PEAK_DECAY = 0.9995;
+export const WAVEFORM_FLOOR_PERCENTILE = 0.15;
+export const WAVEFORM_FLOOR_MARGIN = 1.15;
+export const WAVEFORM_SPEECH_ONSET_RATIO = 1.4;
+export const WAVEFORM_RELATIVE_FLOOR = 0.75;
+
+export function quantizeAgainstRange(
+  level: number,
+  floor: number,
+  peak: number,
+): number {
+  if (!Number.isFinite(level) || level <= 0) {
     return 0;
   }
 
-  return Math.max(0, Math.min(255, Math.round(level * 255)));
+  const safeFloor = Math.max(1e-6, floor);
+  if (level <= safeFloor || peak <= safeFloor) {
+    return 0;
+  }
+
+  const db = 20 * Math.log10(Math.min(1, level));
+  const minDb = 20 * Math.log10(Math.min(1, safeFloor));
+  const maxDb = 20 * Math.log10(Math.min(1, peak));
+  const t = (db - minDb) / Math.max(1e-6, maxDb - minDb);
+  return Math.max(0, Math.min(255, Math.round(t * 255)));
+}
+
+export function quantizeAmplitude(level: number): number {
+  return quantizeAgainstRange(level, 10 ** (-22 / 20), 10 ** (-2 / 20));
 }
 
 export function chunkStartForOffset(offsetMs: number): number {
@@ -48,6 +73,8 @@ export class WaveformSampler {
   private pending: WaveformBatch[] = [];
   private draining = false;
   private stopped = false;
+  private recentLevels: number[] = [];
+  private heldPeak = 0;
   private readonly startedAtMs: number;
   private readonly postBatch: (batch: WaveformBatch) => Promise<void>;
   private readonly onSample?: (offsetMs: number, amplitude: number) => void;
@@ -70,7 +97,7 @@ export class WaveformSampler {
       return;
     }
 
-    const amplitude = quantizeAmplitude(level);
+    const amplitude = this.quantizeLive(level);
     this.onSample?.(offsetMs, amplitude);
 
     if (this.bufferStart !== null && this.buffer.length > 0) {
@@ -122,6 +149,48 @@ export class WaveformSampler {
     }
 
     void this.drain();
+  }
+
+  private quantizeLive(level: number): number {
+    const sample = Number.isFinite(level) ? Math.max(0, level) : 0;
+    if (sample <= 0) {
+      return 0;
+    }
+
+    this.recentLevels.push(sample);
+    if (this.recentLevels.length > WAVEFORM_RANGE_WINDOW) {
+      this.recentLevels.shift();
+    }
+
+    const percentileFloor = (values: number[]): number => {
+      const sorted = values.slice().sort((left, right) => left - right);
+      const floorIndex = Math.min(
+        sorted.length - 1,
+        Math.floor(sorted.length * WAVEFORM_FLOOR_PERCENTILE),
+      );
+      return (sorted[floorIndex] ?? sample) * WAVEFORM_FLOOR_MARGIN;
+    };
+
+    const floor = percentileFloor(this.recentLevels);
+    const pauseLevels = this.recentLevels.slice(-WAVEFORM_PAUSE_WINDOW);
+    const pauseFloor = percentileFloor(pauseLevels);
+    const pausePeak = Math.max(...pauseLevels);
+
+    if (sample > floor * WAVEFORM_SPEECH_ONSET_RATIO) {
+      this.heldPeak = Math.max(sample, this.heldPeak);
+    } else if (this.heldPeak > 0) {
+      this.heldPeak *= WAVEFORM_PEAK_DECAY;
+    }
+
+    const speechPeakReady = this.heldPeak >= floor * WAVEFORM_SPEECH_ONSET_RATIO;
+    const flatPause =
+      pauseLevels.length >= 8 &&
+      pausePeak <= pauseFloor * WAVEFORM_SPEECH_ONSET_RATIO;
+    const displayFloor = Math.max(floor, this.heldPeak * WAVEFORM_RELATIVE_FLOOR);
+
+    return speechPeakReady && !flatPause
+      ? quantizeAgainstRange(sample, displayFloor, this.heldPeak)
+      : 0;
   }
 
   private async drain(): Promise<void> {
