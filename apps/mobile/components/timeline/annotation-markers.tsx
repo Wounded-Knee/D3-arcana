@@ -4,6 +4,7 @@ import Animated, { type AnimatedStyle } from 'react-native-reanimated';
 import { LABEL_WIDTH, OVERSCAN_PX } from './timeline-math';
 import {
   LABEL_HEIGHT,
+  MINIMAP_THICKNESS,
   RULER_GUTTER,
   RULER_HEIGHT,
   TRACK_HEIGHT,
@@ -38,9 +39,9 @@ function trackOffset(
     return null;
   }
   if (orientation === 'vertical') {
-    return RULER_GUTTER + index * TRACK_WIDTH;
+    return RULER_GUTTER + MINIMAP_THICKNESS + index * TRACK_WIDTH;
   }
-  return RULER_HEIGHT + index * TRACK_HEIGHT;
+  return RULER_HEIGHT + MINIMAP_THICKNESS + index * TRACK_HEIGHT;
 }
 
 export function AnnotationMarkers({

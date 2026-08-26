@@ -82,3 +82,27 @@ export function followPlayheadViewStart(
   }
   return clampViewStart(playheadMs - viewportMs, viewportMs, durationMs);
 }
+
+export function minimapPxForTime(
+  timeMs: number,
+  durationMs: number,
+  lengthPx: number,
+): number {
+  'worklet';
+  if (durationMs <= 0 || lengthPx <= 0) {
+    return 0;
+  }
+  return (timeMs / durationMs) * lengthPx;
+}
+
+export function timeForMinimapPx(
+  px: number,
+  durationMs: number,
+  lengthPx: number,
+): number {
+  'worklet';
+  if (lengthPx <= 0) {
+    return 0;
+  }
+  return (px / lengthPx) * durationMs;
+}

@@ -18,6 +18,7 @@ import { ProfilePickerButton } from './profile-picker';
 import {
   LABEL_HEIGHT,
   LABEL_WIDTH,
+  MINIMAP_THICKNESS,
   RULER_GUTTER,
   RULER_HEIGHT,
   TRACK_HEIGHT,
@@ -32,7 +33,15 @@ import {
   DEFAULT_VIEWPORT_MS,
   followPlayheadViewStart,
   OVERSCAN_PX,
+  timeForMinimapPx,
 } from './timeline-math';
+import {
+  TIMELINE_ACCENT,
+  TIMELINE_BG,
+  TIMELINE_LIVE_EDGE,
+  TIMELINE_PLAYHEAD,
+} from './timeline-colors';
+import { TimelineMinimap } from './timeline-minimap';
 import type {
   ChannelScope,
   TimelineAnnotation,
@@ -183,6 +192,7 @@ export function CallTimeline({
     msPerPixel: 30,
     focal: 0,
   });
+  const minimapPanOriginSv = useSharedValue({ viewStartMs: 0 });
 
   const paneSize = paneSizePx(orientation, width, height);
   const durationMs = Math.max(
@@ -507,6 +517,41 @@ export function CallTimeline({
     [commitViewStart, handleFollowLiveChange],
   );
 
+  const handleMinimapJump = useCallback(
+    (alongPx: number) => {
+      const pane = paneSizeSv.value;
+      const duration = durationSv.value;
+      const perPx = msPerPixelSv.value || 1;
+      if (pane <= 0 || duration <= 0) {
+        return;
+      }
+
+      const atMs = timeForMinimapPx(alongPx, duration, pane);
+      const viewportMs = pane * perPx;
+      const nextStart = clampViewStart(
+        atMs - viewportMs / 2,
+        viewportMs,
+        duration,
+      );
+      viewStartSv.value = nextStart;
+      contentShiftPx.value = 0;
+      commitViewStart(nextStart, true);
+      followLiveSv.value = 0;
+      handleFollowLiveChange(false);
+      replayActiveRef.current?.(true);
+    },
+    [
+      commitViewStart,
+      contentShiftPx,
+      durationSv,
+      followLiveSv,
+      handleFollowLiveChange,
+      msPerPixelSv,
+      paneSizeSv,
+      viewStartSv,
+    ],
+  );
+
   const handleSelectionGestureEnd = useCallback(
     (
       startMs: number,
@@ -613,9 +658,16 @@ export function CallTimeline({
     if (along < timeGutter) {
       return;
     }
+    if (
+      across >= rulerCross &&
+      across < rulerCross + MINIMAP_THICKNESS
+    ) {
+      return;
+    }
 
     const atMs =
       viewStartSv.value + (along - timeGutter) * msPerPixelSv.value;
+    const tracksCrossStart = rulerCross + MINIMAP_THICKNESS;
     const hit = annotations.find((annotation) => {
       const isPoint = annotation.endMs <= annotation.startMs;
       const pad = isPoint ? 400 : 0;
@@ -625,7 +677,10 @@ export function CallTimeline({
         return false;
       }
       if (annotation.scope.kind === 'all') {
-        return across <= rulerCross + trackBreadth * tracks.length;
+        return (
+          across < rulerCross ||
+          across >= tracksCrossStart
+        );
       }
       const channelUserId = annotation.scope.userId;
       const index = tracks.findIndex(
@@ -634,7 +689,7 @@ export function CallTimeline({
       if (index < 0) {
         return false;
       }
-      const startAcross = rulerCross + index * trackBreadth;
+      const startAcross = tracksCrossStart + index * trackBreadth;
       return across >= startAcross && across <= startAcross + trackBreadth;
     });
     const nextPlayhead = Math.max(
@@ -702,12 +757,12 @@ export function CallTimeline({
             timeGutter + (last.endMs - viewStartSv.value) / perPx;
           const handleCrossStart =
             last.trackIndex >= 0
-              ? rulerCross + last.trackIndex * trackBreadth
+              ? rulerCross + MINIMAP_THICKNESS + last.trackIndex * trackBreadth
               : 0;
           const handleCrossEnd =
             last.trackIndex >= 0
               ? handleCrossStart + trackBreadth
-              : rulerCross + MAX_TRACKS_VISIBLE * trackBreadth;
+              : rulerCross + MINIMAP_THICKNESS + MAX_TRACKS_VISIBLE * trackBreadth;
           const along = vertical ? event.y : event.x;
           const across = vertical ? event.x : event.y;
           const onHandleCross =
@@ -725,10 +780,12 @@ export function CallTimeline({
           let trackIndex = last.trackIndex;
           if (mode === 0 && selectingSv.value) {
             mode = 1;
-            if (across < rulerCross) {
+            if (across < rulerCross + MINIMAP_THICKNESS) {
               trackIndex = -1;
             } else {
-              trackIndex = Math.floor((across - rulerCross) / trackBreadth);
+              trackIndex = Math.floor(
+                (across - rulerCross - MINIMAP_THICKNESS) / trackBreadth,
+              );
             }
           }
           panOriginSv.value = {
@@ -939,9 +996,97 @@ export function CallTimeline({
     [handleTapSeek],
   );
 
+  const minimapPan = useMemo(
+    () => {
+      'use no memo';
+      const gesture = vertical
+        ? Gesture.Pan().activeOffsetY([-8, 8])
+        : Gesture.Pan().activeOffsetX([-8, 8]);
+      return gesture
+        .onBegin(() => {
+          'worklet';
+          runOnJS(setGesturing)(true);
+          minimapPanOriginSv.value = { viewStartMs: viewStartSv.value };
+        })
+        .onUpdate((event) => {
+          'worklet';
+          const pane = paneSizeSv.value;
+          const duration = durationSv.value;
+          if (pane <= 0 || duration <= 0) {
+            return;
+          }
+
+          const translation = vertical ? event.translationY : event.translationX;
+          const origin = minimapPanOriginSv.value;
+          const perPx = msPerPixelSv.value || 1;
+          const viewportMs = pane * perPx;
+          const nextStart = clampViewStart(
+            origin.viewStartMs + translation * (duration / pane),
+            viewportMs,
+            duration,
+          );
+          viewStartSv.value = nextStart;
+          contentShiftPx.value = (committedViewStartSv.value - nextStart) / perPx;
+          const nextFollow =
+            liveSv.value === 1 &&
+            nextStart + viewportMs >= nowSv.value - LIVE_EDGE_MS
+              ? 1
+              : 0;
+          if (nextFollow !== followLiveSv.value) {
+            followLiveSv.value = nextFollow;
+            runOnJS(handleFollowLiveChange)(nextFollow === 1);
+          }
+        })
+        .onEnd(() => {
+          'worklet';
+          const pane = paneSizeSv.value;
+          const perPx = msPerPixelSv.value || 1;
+          const viewportMs = pane * perPx;
+          const nextStart = viewStartSv.value;
+          const nextFollow =
+            liveSv.value === 1 &&
+            nextStart + viewportMs >= nowSv.value - LIVE_EDGE_MS;
+          runOnJS(handlePanEnd)(nextStart, nextFollow);
+        });
+    },
+    [
+      committedViewStartSv,
+      contentShiftPx,
+      durationSv,
+      followLiveSv,
+      handleFollowLiveChange,
+      handlePanEnd,
+      liveSv,
+      minimapPanOriginSv,
+      msPerPixelSv,
+      nowSv,
+      paneSizeSv,
+      setGesturing,
+      vertical,
+      viewStartSv,
+    ],
+  );
+
+  const minimapTap = useMemo(
+    () => {
+      'use no memo';
+      return Gesture.Tap().onEnd((event) => {
+        'worklet';
+        const along = vertical ? event.y : event.x;
+        runOnJS(handleMinimapJump)(along);
+      });
+    },
+    [handleMinimapJump, vertical],
+  );
+
   const composed = useMemo(
     () => Gesture.Simultaneous(Gesture.Exclusive(pan, tap), pinch),
     [pan, pinch, tap],
+  );
+
+  const minimapComposed = useMemo(
+    () => Gesture.Exclusive(minimapPan, minimapTap),
+    [minimapPan, minimapTap],
   );
 
   const waveformShiftStyle = useAnimatedStyle(() => ({
@@ -1015,10 +1160,32 @@ export function CallTimeline({
       : -1;
   const selectionCrossStart =
     selectionTrackIndex >= 0
-      ? rulerCross + selectionTrackIndex * trackBreadth
+      ? rulerCross + MINIMAP_THICKNESS + selectionTrackIndex * trackBreadth
       : 0;
   const selectionCrossSize =
-    selectionTrackIndex >= 0 ? trackBreadth : rulerCross + tracksCrossPx;
+    selectionTrackIndex >= 0
+      ? trackBreadth
+      : rulerCross + MINIMAP_THICKNESS + tracksCrossPx;
+
+  const minimap = (
+    <GestureDetector gesture={minimapComposed}>
+      <View>
+        <TimelineMinimap
+          orientation={orientation}
+          lengthPx={paneSize}
+          durationMs={durationMs}
+          annotations={annotations}
+          showLiveEdge={live && frozenDurationMs === null}
+          viewStartSv={viewStartSv}
+          msPerPixelSv={msPerPixelSv}
+          durationSv={durationSv}
+          paneSizeSv={paneSizeSv}
+          playheadSv={playheadSv}
+          nowSv={nowSv}
+        />
+      </View>
+    </GestureDetector>
+  );
 
   async function resolvePlaybackSegments(): Promise<RecordingSegment[]> {
     if (!onPreparePlayback) {
@@ -1279,6 +1446,15 @@ export function CallTimeline({
                   </Animated.View>
                 </View>
               </View>
+              <View
+                style={[
+                  styles.minimapColumn,
+                  { height: LABEL_HEIGHT + paneSize },
+                ]}
+              >
+                <View style={styles.verticalCorner} />
+                {minimap}
+              </View>
               <ScrollView
                 horizontal
                 nestedScrollEnabled
@@ -1332,6 +1508,10 @@ export function CallTimeline({
                     />
                   </Animated.View>
                 </View>
+              </View>
+              <View style={styles.minimapRow}>
+                <View style={styles.rulerGutter} />
+                {minimap}
               </View>
               <ScrollView
                 style={{ maxHeight: tracksCrossPx || TRACK_HEIGHT }}
@@ -1393,7 +1573,9 @@ export function CallTimeline({
             <Animated.View
               style={[
                 vertical ? styles.playheadVertical : styles.playhead,
-                !vertical && { height: rulerCross + tracksCrossPx },
+                !vertical && {
+                  height: rulerCross + MINIMAP_THICKNESS + tracksCrossPx,
+                },
                 playheadStyle,
               ]}
             />
@@ -1402,7 +1584,9 @@ export function CallTimeline({
                 style={[
                   vertical ? styles.playheadVertical : styles.playhead,
                   styles.liveEdge,
-                  !vertical && { height: rulerCross + tracksCrossPx },
+                  !vertical && {
+                    height: rulerCross + MINIMAP_THICKNESS + tracksCrossPx,
+                  },
                   liveEdgeStyle,
                 ]}
               />
@@ -1477,7 +1661,7 @@ export function CallTimeline({
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: '#14532d',
+    backgroundColor: TIMELINE_BG,
     borderBottomWidth: 1,
     borderBottomColor: '#166534',
   },
@@ -1549,7 +1733,16 @@ const styles = StyleSheet.create({
   },
   rulerGutter: {
     width: LABEL_WIDTH,
-    backgroundColor: '#14532d',
+    backgroundColor: TIMELINE_BG,
+  },
+  minimapRow: {
+    flexDirection: 'row',
+    height: MINIMAP_THICKNESS,
+    zIndex: 3,
+  },
+  minimapColumn: {
+    width: MINIMAP_THICKNESS,
+    zIndex: 3,
   },
   rulerClip: {
     overflow: 'hidden',
@@ -1564,11 +1757,11 @@ const styles = StyleSheet.create({
   },
   verticalRuler: {
     width: RULER_GUTTER,
-    backgroundColor: '#14532d',
+    backgroundColor: TIMELINE_BG,
   },
   verticalCorner: {
     height: LABEL_HEIGHT,
-    backgroundColor: '#14532d',
+    backgroundColor: TIMELINE_BG,
   },
   tracksScroll: {
     flex: 1,
@@ -1602,7 +1795,7 @@ const styles = StyleSheet.create({
     left: 0,
     width: 2,
     marginLeft: -1,
-    backgroundColor: '#facc15',
+    backgroundColor: TIMELINE_PLAYHEAD,
   },
   playheadVertical: {
     position: 'absolute',
@@ -1611,21 +1804,21 @@ const styles = StyleSheet.create({
     right: 0,
     height: 2,
     marginTop: -1,
-    backgroundColor: '#facc15',
+    backgroundColor: TIMELINE_PLAYHEAD,
   },
   liveEdge: {
-    backgroundColor: '#ef4444',
+    backgroundColor: TIMELINE_LIVE_EDGE,
   },
   handle: {
     position: 'absolute',
     width: 4,
-    backgroundColor: '#86efac',
+    backgroundColor: TIMELINE_ACCENT,
     borderRadius: 2,
   },
   handleHorizontal: {
     position: 'absolute',
     height: 4,
-    backgroundColor: '#86efac',
+    backgroundColor: TIMELINE_ACCENT,
     borderRadius: 2,
   },
 });

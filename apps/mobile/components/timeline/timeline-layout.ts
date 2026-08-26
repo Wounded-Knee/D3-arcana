@@ -9,6 +9,7 @@ export const RULER_GUTTER = 40;
 export const LABEL_HEIGHT = 36;
 export const TRACK_HEIGHT = 48;
 export const TRACK_WIDTH = 88;
+export const MINIMAP_THICKNESS = 16;
 
 export function timeGutterPx(orientation: TimelineOrientation): number {
   return orientation === 'vertical' ? LABEL_HEIGHT : LABEL_WIDTH;

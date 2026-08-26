@@ -96,7 +96,38 @@ export default function TimelineTestScreen() {
     setTracks((current) => current.slice(0, -1));
   }, []);
 
-  const [annotations, setAnnotations] = useState<TimelineAnnotation[]>([]);
+  const [annotations, setAnnotations] = useState<TimelineAnnotation[]>(() => [
+    {
+      id: 'ann-decision',
+      profile: TEST_PROFILES[0]!,
+      note: null,
+      startMs: 4_000,
+      endMs: 10_000,
+      scope: { kind: 'all' },
+      selectionId: null,
+      createdBy: { id: 'local', displayName: 'You' },
+    },
+    {
+      id: 'ann-question',
+      profile: TEST_PROFILES[2]!,
+      note: null,
+      startMs: 18_000,
+      endMs: 18_000,
+      scope: { kind: 'channel', userId: 'sim-1' },
+      selectionId: null,
+      createdBy: { id: 'local', displayName: 'You' },
+    },
+    {
+      id: 'ann-concern',
+      profile: TEST_PROFILES[4]!,
+      note: null,
+      startMs: 32_000,
+      endMs: 42_000,
+      scope: { kind: 'all' },
+      selectionId: null,
+      createdBy: { id: 'local', displayName: 'You' },
+    },
+  ]);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(
     null,
   );
