@@ -1036,6 +1036,47 @@ export default function ConversationScreen() {
       }
   }
 
+  function applyAnnotationGeometry(annotation: TimelineAnnotation) {
+    setAnnotations((current) =>
+      current.map((item) => (item.id === annotation.id ? annotation : item)),
+    );
+  }
+
+  function handleAnnotationDrag(annotation: TimelineAnnotation) {
+    applyAnnotationGeometry(annotation);
+  }
+
+  async function handleAnnotationCommit(annotation: TimelineAnnotation) {
+    applyAnnotationGeometry(annotation);
+    if (!token || !conversationId || !callId) {
+      return;
+    }
+    try {
+      const updated = await updateCallAnnotation(
+        token,
+        conversationId,
+        callId,
+        annotation.id,
+        {
+          startOffsetMs: roundOffsetMs(annotation.startMs),
+          endOffsetMs: roundOffsetMs(annotation.endMs),
+          userId:
+            annotation.scope.kind === 'channel'
+              ? annotation.scope.userId
+              : null,
+        },
+      );
+      const mapped = toTimelineAnnotation(updated);
+      setAnnotations((current) =>
+        current.map((item) => (item.id === mapped.id ? mapped : item)),
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Failed to move annotation',
+      );
+    }
+  }
+
   async function handlePreparePlayback(
     segments: RecordingSegment[],
   ): Promise<RecordingSegment[]> {
@@ -1247,6 +1288,11 @@ export default function ConversationScreen() {
             annotations={annotations}
             selectedAnnotationId={selectedAnnotationId}
             onSelectAnnotation={setSelectedAnnotationId}
+            currentUserId={user.id}
+            onAnnotationDrag={handleAnnotationDrag}
+            onAnnotationCommit={(annotation) => {
+              void handleAnnotationCommit(annotation);
+            }}
             onCreateAnnotation={(input) => {
               void handleCreateAnnotation(input);
             }}

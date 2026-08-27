@@ -311,4 +311,116 @@ describe("annotation routes", () => {
       .expect(403);
     expect(outsider.body.code).toBe("forbidden");
   });
+
+  it("patches annotation geometry and all-channel scope", async () => {
+    const { alice, conversation, app, callId } = await seedMembers();
+    const created = await request(app)
+      .post(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/annotations`,
+      )
+      .set("Authorization", "Bearer test-alice")
+      .send({
+        profileId: SEEDED_ANNOTATION_PROFILES[0].id,
+        startOffsetMs: 1000,
+        endOffsetMs: 2000,
+        userId: alice.id,
+      })
+      .expect(201);
+
+    const moved = await request(app)
+      .patch(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/annotations/${created.body.id}`,
+      )
+      .set("Authorization", "Bearer test-alice")
+      .send({
+        startOffsetMs: 1800.4,
+        endOffsetMs: 3200.6,
+        userId: null,
+      })
+      .expect(200);
+
+    expect(moved.body.startOffsetMs).toBe(1800);
+    expect(moved.body.endOffsetMs).toBe(3201);
+    expect(moved.body.userId).toBeNull();
+  });
+
+  it("syncs a linked selection when annotation geometry is patched", async () => {
+    const { alice, conversation, app, callId } = await seedMembers();
+    const selection = await request(app)
+      .post(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/selections`,
+      )
+      .set("Authorization", "Bearer test-alice")
+      .send({
+        startOffsetMs: 2000,
+        endOffsetMs: 4000,
+        userId: alice.id,
+      })
+      .expect(201);
+
+    const annotation = await request(app)
+      .post(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/annotations`,
+      )
+      .set("Authorization", "Bearer test-alice")
+      .send({
+        profileId: SEEDED_ANNOTATION_PROFILES[3].id,
+        selectionId: selection.body.id,
+      })
+      .expect(201);
+
+    await request(app)
+      .patch(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/annotations/${annotation.body.id}`,
+      )
+      .set("Authorization", "Bearer test-alice")
+      .send({
+        startOffsetMs: 1100,
+        endOffsetMs: 3300,
+        userId: null,
+      })
+      .expect(200);
+
+    const listed = await request(app)
+      .get(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/selections`,
+      )
+      .set("Authorization", "Bearer test-alice")
+      .expect(200);
+
+    expect(listed.body.selections[0]).toMatchObject({
+      id: selection.body.id,
+      startOffsetMs: 1100,
+      endOffsetMs: 3300,
+      userId: null,
+    });
+  });
+
+  it("rejects a ranged annotation shorter than 50ms", async () => {
+    const { conversation, app, callId } = await seedMembers();
+    const created = await request(app)
+      .post(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/annotations`,
+      )
+      .set("Authorization", "Bearer test-alice")
+      .send({
+        profileId: SEEDED_ANNOTATION_PROFILES[1].id,
+        startOffsetMs: 1000,
+        endOffsetMs: 2000,
+      })
+      .expect(201);
+
+    const response = await request(app)
+      .patch(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/annotations/${created.body.id}`,
+      )
+      .set("Authorization", "Bearer test-alice")
+      .send({
+        startOffsetMs: 1000,
+        endOffsetMs: 1020,
+      })
+      .expect(400);
+
+    expect(response.body.code).toBe("bad_request");
+  });
 });

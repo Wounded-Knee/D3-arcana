@@ -11,8 +11,10 @@ import { addConversationMember, createConversation } from "./conversations.js";
 import { createUser } from "./users.js";
 import {
   AnnotationForbiddenError,
+  AnnotationValidationError,
   createCallAnnotation,
   createCallSelection,
+  getCallSelectionById,
   listAnnotationProfiles,
   SEEDED_ANNOTATION_PROFILES,
   serializeAnnotationForViewer,
@@ -150,6 +152,121 @@ describe("annotations repository", () => {
       .from(outboxEvents)
       .where(eq(outboxEvents.aggregateId, annotation.id));
     expect(events.some((event) => event.type === "annotation.updated")).toBe(
+      true,
+    );
+  });
+
+  it("patches annotation range and scope", async () => {
+    const { alice, bob, conversation, call } = await seedCall();
+    const annotation = await createCallAnnotation({
+      callId: call.id,
+      conversationId: conversation.id,
+      createdBy: alice.id,
+      profileId: SEEDED_ANNOTATION_PROFILES[0].id,
+      startOffsetMs: 1000,
+      endOffsetMs: 2000,
+      userId: alice.id,
+    });
+
+    const moved = await updateCallAnnotation({
+      annotationId: annotation.id,
+      actorId: alice.id,
+      startOffsetMs: 1500,
+      endOffsetMs: 2800,
+      userId: bob.id,
+    });
+    expect(moved.startOffsetMs).toBe(1500);
+    expect(moved.endOffsetMs).toBe(2800);
+    expect(moved.userId).toBe(bob.id);
+
+    const allTracks = await updateCallAnnotation({
+      annotationId: annotation.id,
+      actorId: alice.id,
+      userId: null,
+    });
+    expect(allTracks.userId).toBeNull();
+    expect(allTracks.startOffsetMs).toBe(1500);
+    expect(allTracks.endOffsetMs).toBe(2800);
+  });
+
+  it("moves a point annotation without turning it into a range", async () => {
+    const { alice, conversation, call } = await seedCall();
+    const annotation = await createCallAnnotation({
+      callId: call.id,
+      conversationId: conversation.id,
+      createdBy: alice.id,
+      profileId: SEEDED_ANNOTATION_PROFILES[2].id,
+      startOffsetMs: 400,
+      endOffsetMs: 400,
+    });
+
+    const moved = await updateCallAnnotation({
+      annotationId: annotation.id,
+      actorId: alice.id,
+      startOffsetMs: 900,
+      endOffsetMs: 900,
+    });
+    expect(moved.startOffsetMs).toBe(900);
+    expect(moved.endOffsetMs).toBe(900);
+  });
+
+  it("rejects a ranged annotation shorter than 50ms", async () => {
+    const { alice, conversation, call } = await seedCall();
+    const annotation = await createCallAnnotation({
+      callId: call.id,
+      conversationId: conversation.id,
+      createdBy: alice.id,
+      profileId: SEEDED_ANNOTATION_PROFILES[1].id,
+      startOffsetMs: 1000,
+      endOffsetMs: 2000,
+    });
+
+    await expect(
+      updateCallAnnotation({
+        annotationId: annotation.id,
+        actorId: alice.id,
+        startOffsetMs: 1000,
+        endOffsetMs: 1020,
+      }),
+    ).rejects.toBeInstanceOf(AnnotationValidationError);
+  });
+
+  it("syncs a linked selection when the annotation is moved", async () => {
+    const { alice, conversation, call } = await seedCall();
+    const selection = await createCallSelection({
+      callId: call.id,
+      conversationId: conversation.id,
+      createdBy: alice.id,
+      startOffsetMs: 2000,
+      endOffsetMs: 4000,
+      userId: alice.id,
+    });
+    const annotation = await createCallAnnotation({
+      callId: call.id,
+      conversationId: conversation.id,
+      createdBy: alice.id,
+      profileId: SEEDED_ANNOTATION_PROFILES[3].id,
+      selectionId: selection.id,
+    });
+
+    await updateCallAnnotation({
+      annotationId: annotation.id,
+      actorId: alice.id,
+      startOffsetMs: 1200,
+      endOffsetMs: 3600,
+      userId: null,
+    });
+
+    const synced = await getCallSelectionById(selection.id);
+    expect(synced?.startOffsetMs).toBe(1200);
+    expect(synced?.endOffsetMs).toBe(3600);
+    expect(synced?.userId).toBeNull();
+
+    const events = await db
+      .select()
+      .from(outboxEvents)
+      .where(eq(outboxEvents.aggregateId, selection.id));
+    expect(events.some((event) => event.type === "selection.updated")).toBe(
       true,
     );
   });

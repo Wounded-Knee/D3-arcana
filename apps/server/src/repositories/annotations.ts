@@ -783,6 +783,9 @@ export async function updateCallAnnotation(input: {
   actorId: string;
   note?: string | null;
   selectionId?: string | null;
+  startOffsetMs?: number;
+  endOffsetMs?: number;
+  userId?: string | null;
 }): Promise<CallAnnotationRecord> {
   return db.transaction(async (tx) => {
     const existing = await loadAnnotationInTx(tx, input.annotationId);
@@ -801,6 +804,10 @@ export async function updateCallAnnotation(input: {
     let userId = existing.userId;
     let selectionId = existing.selectionId;
     const note = input.note === undefined ? existing.note : input.note;
+    const geometryInput =
+      input.startOffsetMs !== undefined ||
+      input.endOffsetMs !== undefined ||
+      input.userId !== undefined;
 
     if (input.selectionId !== undefined) {
       if (input.selectionId === null) {
@@ -838,8 +845,19 @@ export async function updateCallAnnotation(input: {
         endOffsetMs = selection.endOffsetMs;
         userId = selection.userId;
       }
+    } else if (geometryInput) {
+      startOffsetMs = input.startOffsetMs ?? existing.startOffsetMs;
+      endOffsetMs = input.endOffsetMs ?? existing.endOffsetMs;
+      userId = input.userId === undefined ? existing.userId : input.userId;
+      assertAnnotationRange(startOffsetMs, endOffsetMs);
     }
 
+    const geometryChanged =
+      startOffsetMs !== existing.startOffsetMs ||
+      endOffsetMs !== existing.endOffsetMs ||
+      userId !== existing.userId;
+
+    const now = new Date();
     await tx
       .update(callAnnotations)
       .set({
@@ -848,9 +866,44 @@ export async function updateCallAnnotation(input: {
         endOffsetMs,
         userId,
         selectionId,
-        updatedAt: new Date(),
+        updatedAt: now,
       })
       .where(eq(callAnnotations.id, input.annotationId));
+
+    if (
+      geometryChanged &&
+      selectionId &&
+      input.selectionId === undefined
+    ) {
+      assertSelectionRange(startOffsetMs, endOffsetMs);
+      const [selectionRow] = await tx
+        .update(callSelections)
+        .set({
+          startOffsetMs,
+          endOffsetMs,
+          userId,
+          updatedAt: now,
+        })
+        .where(eq(callSelections.id, selectionId))
+        .returning();
+
+      if (selectionRow) {
+        await tx.insert(outboxEvents).values({
+          type: "selection.updated",
+          aggregateType: "selection",
+          aggregateId: selectionRow.id,
+          conversationId: existing.conversationId,
+          actorId: input.actorId,
+          payload: {
+            selectionId: selectionRow.id,
+            callId: selectionRow.callId,
+            startOffsetMs: selectionRow.startOffsetMs,
+            endOffsetMs: selectionRow.endOffsetMs,
+            userId: selectionRow.userId,
+          },
+        });
+      }
+    }
 
     const record = await loadAnnotationInTx(tx, input.annotationId);
     if (!record) {

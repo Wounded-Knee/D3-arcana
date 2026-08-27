@@ -41,3 +41,25 @@ export function timeToPx(
   'worklet';
   return (timeMs - viewStartMs) / (msPerPixel || 1);
 }
+
+export function trackIndexFromAcross(
+  across: number,
+  rulerCross: number,
+  trackBreadth: number,
+  trackCount: number,
+): number {
+  'worklet';
+  if (across < rulerCross + MINIMAP_THICKNESS) {
+    return -1;
+  }
+  if (trackCount <= 0) {
+    return -1;
+  }
+  const index = Math.floor(
+    (across - rulerCross - MINIMAP_THICKNESS) / trackBreadth,
+  );
+  if (index < 0) {
+    return -1;
+  }
+  return Math.min(index, trackCount - 1);
+}

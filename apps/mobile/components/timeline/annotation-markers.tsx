@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native';
+import { StyleSheet, Text, View, type ViewStyle } from 'react-native';
 import Animated, { type AnimatedStyle } from 'react-native-reanimated';
 
 import { LABEL_WIDTH, OVERSCAN_PX } from './timeline-math';
@@ -11,10 +11,10 @@ import {
   TRACK_WIDTH,
   type TimelineOrientation,
 } from './timeline-layout';
+import { POINT_PAD_MS } from './annotation-geometry';
 import type { TimelineAnnotation, TimelineTrack } from './timeline-model';
 
 const CHIP_MIN_WIDTH = 52;
-const POINT_PAD_MS_FALLBACK = 400;
 
 type AnnotationMarkersProps = {
   annotations: TimelineAnnotation[];
@@ -26,7 +26,6 @@ type AnnotationMarkersProps = {
   tracks: TimelineTrack[];
   tracksCrossPx: number;
   shiftStyle: AnimatedStyle<ViewStyle>;
-  onSelect: (id: string) => void;
 };
 
 function trackOffset(
@@ -54,20 +53,21 @@ export function AnnotationMarkers({
   tracks,
   tracksCrossPx,
   shiftStyle,
-  onSelect,
 }: AnnotationMarkersProps) {
   if (paneSize <= 0) {
     return null;
   }
 
   const vertical = orientation === 'vertical';
+  const rulerCross = vertical ? RULER_GUTTER : RULER_HEIGHT;
   const clipStyle = vertical
     ? { top: LABEL_HEIGHT, height: paneSize, left: 0, right: 0 }
     : { left: LABEL_WIDTH, width: paneSize, top: 0, bottom: 0 };
+  const allChannelCross = rulerCross + MINIMAP_THICKNESS + tracksCrossPx;
 
   return (
-    <View pointerEvents="box-none" style={[styles.clip, clipStyle]}>
-      <Animated.View pointerEvents="box-none" style={[styles.layer, shiftStyle]}>
+    <View pointerEvents="none" style={[styles.clip, clipStyle]}>
+      <Animated.View pointerEvents="none" style={[styles.layer, shiftStyle]}>
       {annotations.map((annotation) => {
         const isPoint = annotation.endMs <= annotation.startMs;
         const labelAlongPx = vertical
@@ -77,7 +77,7 @@ export function AnnotationMarkers({
               annotation.profile.name.length * 7 + 16,
             );
         const rangePx = isPoint
-          ? Math.max(labelAlongPx, POINT_PAD_MS_FALLBACK / msPerPixel)
+          ? Math.max(labelAlongPx, POINT_PAD_MS / msPerPixel)
           : (annotation.endMs - annotation.startMs) / msPerPixel;
         const startPx = isPoint
           ? (annotation.startMs - viewStartMs) / msPerPixel - rangePx / 2
@@ -92,35 +92,33 @@ export function AnnotationMarkers({
             ? vertical
               ? TRACK_WIDTH
               : TRACK_HEIGHT
-            : vertical
-              ? RULER_GUTTER + tracksCrossPx
-              : RULER_HEIGHT + tracksCrossPx;
+            : allChannelCross;
         const alongSize = Math.max(rangePx, labelAlongPx);
-        const allChannelCross = vertical ? RULER_GUTTER : RULER_HEIGHT;
 
         if (startPx + alongSize < -OVERSCAN_PX || startPx > paneSize + OVERSCAN_PX) {
           return null;
         }
 
         return (
-          <Pressable
+          <View
             key={annotation.id}
-            onPress={() => onSelect(annotation.id)}
             style={[
               styles.box,
+              annotation.scope.kind === 'all' &&
+                (vertical ? styles.boxAllVertical : styles.boxAll),
               {
                 ...(vertical
                   ? {
                       top: startPx,
                       height: alongSize,
                       left: crossStart,
-                      width: annotation.scope.kind === 'all' ? allChannelCross : crossSize,
+                      width: crossSize,
                     }
                   : {
                       left: startPx,
                       width: alongSize,
                       top: crossStart,
-                      height: annotation.scope.kind === 'all' ? allChannelCross : crossSize,
+                      height: crossSize,
                     }),
                 backgroundColor: selected
                   ? `${annotation.profile.color}55`
@@ -134,11 +132,19 @@ export function AnnotationMarkers({
           >
             <Text
               numberOfLines={1}
-              style={[styles.label, { color: annotation.profile.color }]}
+              style={[
+                styles.label,
+                vertical && styles.labelVertical,
+                { color: annotation.profile.color },
+                annotation.scope.kind === 'all' &&
+                  (vertical
+                    ? { width: rulerCross }
+                    : { height: rulerCross, lineHeight: rulerCross - 2 }),
+              ]}
             >
               {annotation.profile.name}
             </Text>
-          </Pressable>
+          </View>
         );
       })}
       </Animated.View>
@@ -161,8 +167,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
     overflow: 'hidden',
   },
+  boxAll: {
+    justifyContent: 'flex-start',
+    paddingTop: 0,
+  },
+  boxAllVertical: {
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
+    paddingLeft: 4,
+  },
   label: {
     fontSize: 11,
     fontWeight: '700',
+  },
+  labelVertical: {
+    fontSize: 10,
   },
 });

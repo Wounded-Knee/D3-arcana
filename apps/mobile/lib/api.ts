@@ -732,6 +732,9 @@ export async function updateCallAnnotation(
   input: {
     note?: string | null;
     selectionId?: string | null;
+    startOffsetMs?: number;
+    endOffsetMs?: number;
+    userId?: string | null;
   },
 ): Promise<CallAnnotationItem> {
   return request<CallAnnotationItem>(

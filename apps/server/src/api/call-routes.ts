@@ -795,6 +795,9 @@ export function registerCallRoutes(
           actorId: req.user!.userId,
           note: body.note,
           selectionId: body.selectionId,
+          startOffsetMs: body.startOffsetMs,
+          endOffsetMs: body.endOffsetMs,
+          userId: body.userId,
         });
         res.json(
           await serializeAnnotationForViewer(annotation, req.user!.userId),

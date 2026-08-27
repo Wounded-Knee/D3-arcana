@@ -208,6 +208,21 @@ export default function TimelineTestScreen() {
         annotations={annotations}
         selectedAnnotationId={selectedAnnotationId}
         onSelectAnnotation={setSelectedAnnotationId}
+        currentUserId="local"
+        onAnnotationDrag={(annotation) => {
+          setAnnotations((current) =>
+            current.map((item) =>
+              item.id === annotation.id ? annotation : item,
+            ),
+          );
+        }}
+        onAnnotationCommit={(annotation) => {
+          setAnnotations((current) =>
+            current.map((item) =>
+              item.id === annotation.id ? annotation : item,
+            ),
+          );
+        }}
         onCreateAnnotation={(input) => {
           const profile = TEST_PROFILES.find((item) => item.id === input.profileId);
           if (!profile) {

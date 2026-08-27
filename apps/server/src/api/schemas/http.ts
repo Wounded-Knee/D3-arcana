@@ -79,6 +79,9 @@ export const createAnnotationSchema = z.object({
 export const updateAnnotationSchema = z.object({
   note: z.string().max(10_000).nullable().optional(),
   selectionId: z.uuid().nullable().optional(),
+  startOffsetMs: offsetMsSchema.optional(),
+  endOffsetMs: offsetMsSchema.optional(),
+  userId: z.uuid().nullable().optional(),
 });
 
 export const upsertAnnotationRatificationSchema = z.object({

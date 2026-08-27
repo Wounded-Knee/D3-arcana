@@ -13,6 +13,14 @@ import { CATCHUP_RATE, isAtReadyEdge } from '@/lib/call/catchup';
 import { createPlaybackClock } from '@/lib/call/playback-clock';
 import { withLiveTail } from '@/lib/call/playback-sync';
 import type { RecordingSegment } from '@/lib/call/playback-types';
+import {
+  annotationPanMode,
+  annotationTrackIndex,
+  applyAnnotationPan,
+  hitAnnotationIndex,
+  POINT_PAD_MS,
+  type AnnotationHitTarget,
+} from './annotation-geometry';
 import { AnnotationMarkers } from './annotation-markers';
 import { ParticipantTrack } from './participant-track';
 import { ProfilePickerButton } from './profile-picker';
@@ -26,6 +34,7 @@ import {
   TRACK_WIDTH,
   paneSizePx,
   timeGutterPx,
+  trackIndexFromAcross,
   type TimelineOrientation,
 } from './timeline-layout';
 import {
@@ -90,6 +99,11 @@ type CallTimelineProps = {
   ) => void | Promise<TimelineSelection | void>;
   onSelectionClear?: (selection: TimelineSelection | null) => void;
   onAttachSelection?: (selection: TimelineSelection) => void;
+  currentUserId?: string | null;
+  onAnnotationDrag?: (annotation: TimelineAnnotation) => void;
+  onAnnotationCommit?: (
+    annotation: TimelineAnnotation,
+  ) => void | Promise<void>;
   onPreparePlayback?: (
     segments: RecordingSegment[],
   ) => Promise<RecordingSegment[]>;
@@ -115,6 +129,9 @@ export function CallTimeline({
   onSelectionCommit,
   onSelectionClear,
   onAttachSelection,
+  currentUserId = null,
+  onAnnotationDrag,
+  onAnnotationCommit,
   onPreparePlayback,
 }: CallTimelineProps) {
   const startedAtMs = Date.parse(startedAt);
@@ -139,6 +156,11 @@ export function CallTimeline({
   const [followLive, setFollowLive] = useState(live);
   const [playing, setPlaying] = useState(false);
   const [selecting, setSelecting] = useState(false);
+  const [adjustingAnnotationId, setAdjustingAnnotationId] = useState<
+    string | null
+  >(null);
+  const [annotationDraft, setAnnotationDraft] =
+    useState<TimelineAnnotation | null>(null);
   const [selection, setSelection] = useState<TimelineSelection | null>(null);
   const [soloUserId, setSoloUserId] = useState<string | null>(null);
   const [catchup, setCatchup] = useState<CatchupMode>('off');
@@ -187,9 +209,21 @@ export function CallTimeline({
     endMs: -1,
     trackIndex: -1,
   });
+  const lastAnnotationSv = useSharedValue({
+    startMs: -1,
+    endMs: -1,
+    trackIndex: -1,
+  });
+  const annotationHitsSv = useSharedValue<AnnotationHitTarget[]>([]);
+  const adjustingSv = useSharedValue(0);
+  const trackCountSv = useSharedValue(0);
+  const tracksCrossSv = useSharedValue(0);
   const selectMovedSv = useSharedValue(0);
   const selectionRef = useRef<TimelineSelection | null>(null);
   selectionRef.current = selection;
+  const annotationsRef = useRef(annotations);
+  const adjustingIdRef = useRef<string | null>(null);
+  adjustingIdRef.current = adjustingAnnotationId;
   const tracksDuringPanRef = useRef(tracks);
   const pinchOriginSv = useSharedValue({
     viewStartMs: 0,
@@ -203,6 +237,15 @@ export function CallTimeline({
     frozenDurationMs ?? nowMs,
     DEFAULT_VIEWPORT_MS,
   );
+  const displayAnnotations = useMemo(() => {
+    if (!annotationDraft) {
+      return annotations;
+    }
+    return annotations.map((item) =>
+      item.id === annotationDraft.id ? annotationDraft : item,
+    );
+  }, [annotationDraft, annotations]);
+  annotationsRef.current = displayAnnotations;
   const readySegments = useMemo(
     () =>
       recordings.filter(
@@ -253,6 +296,62 @@ export function CallTimeline({
   useEffect(() => {
     selectingSv.value = selecting ? 1 : 0;
   }, [selecting, selectingSv]);
+
+  useEffect(() => {
+    if (adjustingAnnotationId && adjustingAnnotationId !== selectedAnnotationId) {
+      setAdjustingAnnotationId(null);
+    }
+  }, [adjustingAnnotationId, selectedAnnotationId]);
+
+  useEffect(() => {
+    adjustingSv.value = adjustingAnnotationId ? 1 : 0;
+  }, [adjustingAnnotationId, adjustingSv]);
+
+  useEffect(() => {
+    trackCountSv.value = tracks.length;
+    tracksCrossSv.value = vertical
+      ? Math.max(tracks.length, 1) * TRACK_WIDTH
+      : Math.min(
+          Math.max(tracks.length, 1) * TRACK_HEIGHT,
+          MAX_TRACKS_VISIBLE * TRACK_HEIGHT,
+        );
+  }, [trackCountSv, tracks.length, tracksCrossSv, vertical]);
+
+  useEffect(() => {
+    if (!adjustingAnnotationId) {
+      setAnnotationDraft(null);
+    }
+  }, [adjustingAnnotationId]);
+
+  useEffect(() => {
+    annotationHitsSv.value = displayAnnotations.map((annotation) => ({
+      id: annotation.id,
+      startMs: annotation.startMs,
+      endMs: annotation.endMs,
+      trackIndex: annotationTrackIndex(annotation.scope, tracks),
+      isPoint: annotation.endMs <= annotation.startMs ? 1 : 0,
+      editable:
+        currentUserId && annotation.createdBy.id === currentUserId ? 1 : 0,
+    }));
+  }, [annotationHitsSv, currentUserId, displayAnnotations, tracks]);
+
+  useEffect(() => {
+    if (gesturingRef.current) {
+      return;
+    }
+    const adjusting = displayAnnotations.find(
+      (item) => item.id === adjustingAnnotationId,
+    );
+    if (!adjusting) {
+      lastAnnotationSv.value = { startMs: -1, endMs: -1, trackIndex: -1 };
+      return;
+    }
+    lastAnnotationSv.value = {
+      startMs: adjusting.startMs,
+      endMs: adjusting.endMs,
+      trackIndex: annotationTrackIndex(adjusting.scope, tracks),
+    };
+  }, [adjustingAnnotationId, displayAnnotations, lastAnnotationSv, tracks]);
 
   useEffect(() => {
     if (!selection) {
@@ -499,12 +598,143 @@ export function CallTimeline({
     gesturingRef.current = value;
   }, []);
 
+  const deselectAnnotationForNewSelection = useCallback(() => {
+    setAdjustingAnnotationId(null);
+    onSelectAnnotation?.(null);
+  }, [onSelectAnnotation]);
+
   const handleSelectModeStart = useCallback(() => {
     setSelecting(true);
+    deselectAnnotationForNewSelection();
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
       () => undefined,
     );
-  }, []);
+  }, [deselectAnnotationForNewSelection]);
+
+  const handleAnnotationAdjustStart = useCallback(
+    (annotationId: string) => {
+      onSelectAnnotation?.(annotationId);
+      setAdjustingAnnotationId(annotationId);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+        () => undefined,
+      );
+    },
+    [onSelectAnnotation],
+  );
+
+  const handleSelectOtherAnnotation = useCallback(
+    (annotationId: string) => {
+      setAdjustingAnnotationId(null);
+      onSelectAnnotation?.(annotationId);
+    },
+    [onSelectAnnotation],
+  );
+
+  const scopeFromTrackIndex = useCallback(
+    (trackIndex: number): ChannelScope =>
+      trackIndex >= 0 && tracks[trackIndex]
+        ? { kind: 'channel', userId: tracks[trackIndex]!.userId }
+        : { kind: 'all' },
+    [tracks],
+  );
+
+  const handleAnnotationDrag = useCallback(
+    (startMs: number, endMs: number, trackIndex: number) => {
+      const id = adjustingIdRef.current;
+      if (!id) {
+        return;
+      }
+      const current = annotationsRef.current.find((item) => item.id === id);
+      if (!current) {
+        return;
+      }
+      const scope = scopeFromTrackIndex(trackIndex);
+      const next: TimelineAnnotation = {
+        ...current,
+        startMs,
+        endMs,
+        scope,
+      };
+      if (
+        current.startMs === next.startMs &&
+        current.endMs === next.endMs &&
+        current.scope.kind === next.scope.kind &&
+        (next.scope.kind === 'all' ||
+          (current.scope.kind === 'channel' &&
+            next.scope.kind === 'channel' &&
+            current.scope.userId === next.scope.userId))
+      ) {
+        return;
+      }
+      setAnnotationDraft(next);
+      onAnnotationDrag?.(next);
+      if (current.selectionId && selectionRef.current?.id === current.selectionId) {
+        setSelection({
+          id: current.selectionId,
+          startMs,
+          endMs,
+          scope,
+        });
+      }
+      if (followLiveRef.current) {
+        setFollowLive(false);
+        replayActiveRef.current?.(true);
+      }
+    },
+    [onAnnotationDrag, scopeFromTrackIndex],
+  );
+
+  const handleAnnotationGestureEnd = useCallback(
+    (startMs: number, endMs: number, trackIndex: number, mode: number) => {
+      gesturingRef.current = false;
+      const id = adjustingIdRef.current;
+      if (!id) {
+        return;
+      }
+      const current = annotationsRef.current.find((item) => item.id === id);
+      if (!current) {
+        return;
+      }
+      const scope = scopeFromTrackIndex(trackIndex);
+      const isPoint = current.startMs === current.endMs && mode === 4;
+      const snapped = isPoint
+        ? {
+            startMs: Math.max(0, Math.min(Math.round(startMs), durationSv.value)),
+            endMs: Math.max(0, Math.min(Math.round(endMs), durationSv.value)),
+          }
+        : snapSelectionEdges(
+            tracksDuringPanRef.current,
+            scope,
+            startMs,
+            endMs,
+            mode === 5 ? 'start' : mode === 6 ? 'end' : 'both',
+            durationSv.value,
+          );
+      const next: TimelineAnnotation = {
+        ...current,
+        startMs: snapped.startMs,
+        endMs: snapped.endMs,
+        scope,
+      };
+      setAnnotationDraft(next);
+      onAnnotationDrag?.(next);
+      if (current.selectionId && selectionRef.current?.id === current.selectionId) {
+        setSelection({
+          id: current.selectionId,
+          startMs: next.startMs,
+          endMs: next.endMs,
+          scope,
+        });
+      }
+      void Promise.resolve(onAnnotationCommit?.(next)).catch(() => undefined);
+    },
+    [
+      durationSv,
+      onAnnotationCommit,
+      onAnnotationDrag,
+      scopeFromTrackIndex,
+    ],
+  );
 
   const handleFollowLiveChange = useCallback((nextFollow: boolean) => {
     if (followLiveRef.current === nextFollow) {
@@ -585,8 +815,17 @@ export function CallTimeline({
         moved,
         durationSv.value,
       );
+      const current = selectionRef.current;
+      const linkedToAnnotation =
+        mode === 1 &&
+        Boolean(
+          current?.id &&
+            annotationsRef.current.some(
+              (item) => item.selectionId === current.id,
+            ),
+        );
       const next: TimelineSelection = {
-        id: selectionRef.current?.id,
+        id: linkedToAnnotation ? undefined : current?.id,
         startMs: snapped.startMs,
         endMs: snapped.endMs,
         scope,
@@ -596,17 +835,16 @@ export function CallTimeline({
         .then((committed) => {
           const withId = committed?.id ? { ...next, id: committed.id } : next;
           if (committed?.id) {
-            setSelection((current) =>
-              current ? { ...current, id: committed.id } : withId,
+            setSelection((currentSelection) =>
+              currentSelection
+                ? { ...currentSelection, id: committed.id }
+                : withId,
             );
-          }
-          if (mode === 1 && selectedAnnotationId) {
-            return onAttachSelection?.(withId);
           }
         })
         .catch(() => undefined);
     },
-    [durationSv, onAttachSelection, onSelectionCommit, selectedAnnotationId, tracks],
+    [durationSv, onSelectionCommit, tracks],
   );
 
   const handleSelectionDrag = useCallback(
@@ -669,40 +907,26 @@ export function CallTimeline({
     if (along < timeGutter) {
       return;
     }
-    if (
-      across >= rulerCross &&
-      across < rulerCross + MINIMAP_THICKNESS
-    ) {
-      return;
-    }
 
     const atMs =
       viewStartSv.value + (along - timeGutter) * msPerPixelSv.value;
-    const tracksCrossStart = rulerCross + MINIMAP_THICKNESS;
-    const hit = annotations.find((annotation) => {
-      const isPoint = annotation.endMs <= annotation.startMs;
-      const pad = isPoint ? 400 : 0;
-      const start = annotation.startMs - pad / 2;
-      const end = annotation.endMs + pad / 2;
-      if (atMs < start || atMs > end) {
-        return false;
-      }
-      if (annotation.scope.kind === 'all') {
-        return (
-          across < rulerCross ||
-          across >= tracksCrossStart
-        );
-      }
-      const channelUserId = annotation.scope.userId;
-      const index = tracks.findIndex(
-        (track) => track.userId === channelUserId,
-      );
-      if (index < 0) {
-        return false;
-      }
-      const startAcross = tracksCrossStart + index * trackBreadth;
-      return across >= startAcross && across <= startAcross + trackBreadth;
-    });
+    const hitIndex = hitAnnotationIndex(
+      annotationHitsSv.value,
+      atMs,
+      across,
+      rulerCross,
+      trackBreadth,
+    );
+    const hit =
+      hitIndex >= 0 ? displayAnnotations[hitIndex] : undefined;
+    const onMinimap =
+      across >= rulerCross &&
+      across < rulerCross + MINIMAP_THICKNESS;
+
+    if (!hit && onMinimap) {
+      return;
+    }
+
     const nextPlayhead = Math.max(
       0,
       Math.min(durationSv.value, atMs),
@@ -719,10 +943,14 @@ export function CallTimeline({
     }
 
     if (hit) {
+      if (hit.id !== adjustingIdRef.current) {
+        setAdjustingAnnotationId(null);
+      }
       onSelectAnnotation?.(hit.id);
       return;
     }
 
+    setAdjustingAnnotationId(null);
     onSelectAnnotation?.(null);
     const currentSelection = selectionRef.current;
     if (currentSelection) {
@@ -730,14 +958,14 @@ export function CallTimeline({
       onSelectionClear?.(currentSelection);
     }
   }, [
-    annotations,
+    annotationHitsSv,
+    displayAnnotations,
     durationSv,
     msPerPixelSv,
     onSelectAnnotation,
     onSelectionClear,
     playheadSv,
     stopPlaybackView,
-    tracks,
     viewStartSv,
     paneSizeSv,
     rulerCross,
@@ -762,6 +990,41 @@ export function CallTimeline({
           runOnJS(setGesturing)(true);
           const last = lastSelectionSv.value;
           const perPx = msPerPixelSv.value || 1;
+          const along = vertical ? event.y : event.x;
+          const across = vertical ? event.x : event.y;
+          let mode = 0;
+          let trackIndex = last.trackIndex;
+          let originStartMs = last.startMs;
+          let originEndMs = last.endMs;
+
+          if (adjustingSv.value) {
+            const annMode = annotationPanMode(
+              lastAnnotationSv.value,
+              along,
+              across,
+              viewStartSv.value,
+              perPx,
+              timeGutter,
+              rulerCross,
+              trackBreadth,
+              tracksCrossSv.value,
+              HANDLE_HIT_PX,
+            );
+            if (annMode !== 0) {
+              const lastAnn = lastAnnotationSv.value;
+              panOriginSv.value = {
+                viewStartMs: viewStartSv.value,
+                msPerPixel: msPerPixelSv.value,
+                selection: selectingSv.value,
+                mode: annMode,
+                trackIndex: lastAnn.trackIndex,
+                startMs: lastAnn.startMs,
+                endMs: lastAnn.endMs,
+              };
+              return;
+            }
+          }
+
           const alongStart =
             timeGutter + (last.startMs - viewStartSv.value) / perPx;
           const alongEnd =
@@ -774,13 +1037,10 @@ export function CallTimeline({
             last.trackIndex >= 0
               ? handleCrossStart + trackBreadth
               : rulerCross + MINIMAP_THICKNESS + MAX_TRACKS_VISIBLE * trackBreadth;
-          const along = vertical ? event.y : event.x;
-          const across = vertical ? event.x : event.y;
           const onHandleCross =
             last.startMs >= 0 &&
             across >= handleCrossStart &&
             across <= handleCrossEnd;
-          let mode = 0;
           if (onHandleCross && last.startMs >= 0) {
             if (Math.abs(along - alongStart) <= HANDLE_HIT_PX) {
               mode = 2;
@@ -788,15 +1048,17 @@ export function CallTimeline({
               mode = 3;
             }
           }
-          let trackIndex = last.trackIndex;
           if (mode === 0 && selectingSv.value) {
             mode = 1;
-            trackIndex =
-              across < rulerCross + MINIMAP_THICKNESS
-                ? -1
-                : Math.floor(
-                    (across - rulerCross - MINIMAP_THICKNESS) / trackBreadth,
-                  );
+            trackIndex = trackIndexFromAcross(
+              across,
+              rulerCross,
+              trackBreadth,
+              trackCountSv.value,
+            );
+            originStartMs = last.startMs;
+            originEndMs = last.endMs;
+            runOnJS(deselectAnnotationForNewSelection)();
           }
           panOriginSv.value = {
             viewStartMs: viewStartSv.value,
@@ -804,8 +1066,8 @@ export function CallTimeline({
             selection: selectingSv.value,
             mode,
             trackIndex,
-            startMs: last.startMs,
-            endMs: last.endMs,
+            startMs: originStartMs,
+            endMs: originEndMs,
           };
         })
         .onUpdate((event) => {
@@ -817,7 +1079,36 @@ export function CallTimeline({
           }
 
           const along = vertical ? event.y : event.x;
+          const across = vertical ? event.x : event.y;
           const translation = vertical ? event.translationY : event.translationX;
+
+          if (origin.mode === 4 || origin.mode === 5 || origin.mode === 6) {
+            const next = applyAnnotationPan(
+              origin,
+              along,
+              across,
+              translation,
+              timeGutter,
+              durationSv.value,
+              rulerCross,
+              trackBreadth,
+              trackCountSv.value,
+            );
+            const lastAnn = lastAnnotationSv.value;
+            if (
+              lastAnn.startMs !== next.startMs ||
+              lastAnn.endMs !== next.endMs ||
+              lastAnn.trackIndex !== next.trackIndex
+            ) {
+              lastAnnotationSv.value = next;
+              runOnJS(handleAnnotationDrag)(
+                next.startMs,
+                next.endMs,
+                next.trackIndex,
+              );
+            }
+            return;
+          }
 
           if (origin.mode === 1 || origin.mode === 2 || origin.mode === 3) {
             const atMs =
@@ -890,6 +1181,16 @@ export function CallTimeline({
         .onEnd(() => {
           'worklet';
           const origin = panOriginSv.value;
+          if (origin.mode === 4 || origin.mode === 5 || origin.mode === 6) {
+            const last = lastAnnotationSv.value;
+            runOnJS(handleAnnotationGestureEnd)(
+              last.startMs,
+              last.endMs,
+              last.trackIndex,
+              origin.mode,
+            );
+            return;
+          }
           if (origin.mode === 1 || origin.mode === 2 || origin.mode === 3) {
             const last = lastSelectionSv.value;
             runOnJS(handleSelectionGestureEnd)(
@@ -911,14 +1212,19 @@ export function CallTimeline({
         });
     },
     [
+      adjustingSv,
       committedViewStartSv,
       contentShiftPx,
+      deselectAnnotationForNewSelection,
       durationSv,
       followLiveSv,
+      handleAnnotationDrag,
+      handleAnnotationGestureEnd,
       handleFollowLiveChange,
       handlePanEnd,
       handleSelectionDrag,
       handleSelectionGestureEnd,
+      lastAnnotationSv,
       lastSelectionSv,
       liveSv,
       msPerPixelSv,
@@ -929,6 +1235,8 @@ export function CallTimeline({
       setGesturing,
       timeGutter,
       trackBreadth,
+      trackCountSv,
+      tracksCrossSv,
       vertical,
       viewStartSv,
       paneSizeSv,
@@ -951,6 +1259,51 @@ export function CallTimeline({
           const along = vertical ? event.y : event.x;
           const across = vertical ? event.x : event.y;
           selectMovedSv.value = 0;
+          const atMs =
+            viewStartSv.value +
+            Math.max(0, along - timeGutter) * (msPerPixelSv.value || 1);
+          const hitIndex = hitAnnotationIndex(
+            annotationHitsSv.value,
+            atMs,
+            across,
+            rulerCross,
+            trackBreadth,
+          );
+          if (hitIndex >= 0) {
+            const hit = annotationHitsSv.value[hitIndex];
+            if (hit && hit.editable) {
+              runOnJS(setGesturing)(true);
+              runOnJS(handleAnnotationAdjustStart)(hit.id);
+              lastAnnotationSv.value = {
+                startMs: hit.startMs,
+                endMs: hit.endMs,
+                trackIndex: hit.trackIndex,
+              };
+              panOriginSv.value = {
+                viewStartMs: viewStartSv.value,
+                msPerPixel: msPerPixelSv.value,
+                selection: 0,
+                mode: 4,
+                trackIndex: hit.trackIndex,
+                startMs: hit.startMs,
+                endMs: hit.endMs,
+              };
+              return;
+            }
+            if (hit) {
+              runOnJS(handleSelectOtherAnnotation)(hit.id);
+              panOriginSv.value = {
+                viewStartMs: viewStartSv.value,
+                msPerPixel: msPerPixelSv.value,
+                selection: 0,
+                mode: 0,
+                trackIndex: -1,
+                startMs: -1,
+                endMs: -1,
+              };
+              return;
+            }
+          }
           if (
             along < timeGutter ||
             (across >= rulerCross &&
@@ -975,12 +1328,12 @@ export function CallTimeline({
             msPerPixel: msPerPixelSv.value,
             selection: 1,
             mode: 1,
-            trackIndex:
-              across < rulerCross + MINIMAP_THICKNESS
-                ? -1
-                : Math.floor(
-                    (across - rulerCross - MINIMAP_THICKNESS) / trackBreadth,
-                  ),
+            trackIndex: trackIndexFromAcross(
+              across,
+              rulerCross,
+              trackBreadth,
+              trackCountSv.value,
+            ),
             startMs: -1,
             endMs: -1,
           };
@@ -988,15 +1341,47 @@ export function CallTimeline({
         .onUpdate((event) => {
           'worklet';
           const origin = panOriginSv.value;
-          if (origin.mode !== 1 || paneSizeSv.value <= 0) {
+          if (paneSizeSv.value <= 0) {
             return;
           }
           const along = vertical ? event.y : event.x;
+          const across = vertical ? event.x : event.y;
           const translation = vertical ? event.translationY : event.translationX;
           if (
             selectMovedSv.value === 0 &&
             Math.abs(translation) < SELECT_DRAG_MIN_PX
           ) {
+            return;
+          }
+          if (origin.mode === 4 || origin.mode === 5 || origin.mode === 6) {
+            selectMovedSv.value = 1;
+            const next = applyAnnotationPan(
+              origin,
+              along,
+              across,
+              translation,
+              timeGutter,
+              durationSv.value,
+              rulerCross,
+              trackBreadth,
+              trackCountSv.value,
+            );
+            const lastAnn = lastAnnotationSv.value;
+            if (
+              lastAnn.startMs !== next.startMs ||
+              lastAnn.endMs !== next.endMs ||
+              lastAnn.trackIndex !== next.trackIndex
+            ) {
+              lastAnnotationSv.value = next;
+              runOnJS(handleAnnotationDrag)(
+                next.startMs,
+                next.endMs,
+                next.trackIndex,
+              );
+            }
+            return;
+          }
+          if (origin.mode !== 1) {
             return;
           }
           selectMovedSv.value = 1;
@@ -1032,6 +1417,19 @@ export function CallTimeline({
         .onEnd(() => {
           'worklet';
           const origin = panOriginSv.value;
+          if (
+            (origin.mode === 4 || origin.mode === 5 || origin.mode === 6) &&
+            selectMovedSv.value
+          ) {
+            const last = lastAnnotationSv.value;
+            runOnJS(handleAnnotationGestureEnd)(
+              last.startMs,
+              last.endMs,
+              last.trackIndex,
+              origin.mode,
+            );
+            return;
+          }
           if (origin.mode === 1 && selectMovedSv.value) {
             const last = lastSelectionSv.value;
             runOnJS(handleSelectionGestureEnd)(
@@ -1046,10 +1444,16 @@ export function CallTimeline({
         });
     },
     [
+      annotationHitsSv,
       durationSv,
+      handleAnnotationAdjustStart,
+      handleAnnotationDrag,
+      handleAnnotationGestureEnd,
       handleSelectModeStart,
+      handleSelectOtherAnnotation,
       handleSelectionDrag,
       handleSelectionGestureEnd,
+      lastAnnotationSv,
       lastSelectionSv,
       msPerPixelSv,
       panOriginSv,
@@ -1060,6 +1464,7 @@ export function CallTimeline({
       setGesturing,
       timeGutter,
       trackBreadth,
+      trackCountSv,
       vertical,
       viewStartSv,
     ],
@@ -1309,6 +1714,41 @@ export function CallTimeline({
     selectionTrackIndex >= 0
       ? trackBreadth
       : rulerCross + MINIMAP_THICKNESS + tracksCrossPx;
+  const adjustingAnnotation = displayAnnotations.find(
+    (item) => item.id === adjustingAnnotationId,
+  );
+  const adjustingIsPoint =
+    !!adjustingAnnotation &&
+    adjustingAnnotation.endMs <= adjustingAnnotation.startMs;
+  const adjustingPadMs = adjustingIsPoint ? POINT_PAD_MS : 0;
+  const adjustingVisualStartMs = adjustingAnnotation
+    ? adjustingAnnotation.startMs - adjustingPadMs / 2
+    : 0;
+  const adjustingVisualEndMs = adjustingAnnotation
+    ? (adjustingIsPoint
+        ? adjustingAnnotation.startMs
+        : adjustingAnnotation.endMs) + adjustingPadMs / 2
+    : 0;
+  const adjustingAlong =
+    adjustingAnnotation && paneSize > 0
+      ? (adjustingVisualStartMs - viewStartMs) / msPerPixel
+      : 0;
+  const adjustingAlongSize =
+    adjustingAnnotation && paneSize > 0
+      ? (adjustingVisualEndMs - adjustingVisualStartMs) / msPerPixel
+      : 0;
+  const adjustingTrackIndex = adjustingAnnotation
+    ? annotationTrackIndex(adjustingAnnotation.scope, tracks)
+    : -1;
+  const adjustingCrossStart =
+    adjustingTrackIndex >= 0
+      ? rulerCross + MINIMAP_THICKNESS + adjustingTrackIndex * trackBreadth
+      : 0;
+  const adjustingCrossSize =
+    adjustingTrackIndex >= 0
+      ? trackBreadth
+      : rulerCross + MINIMAP_THICKNESS + tracksCrossPx;
+  const adjustingHandleColor = adjustingAnnotation?.profile.color ?? TIMELINE_ACCENT;
 
   const minimap = (
     <GestureDetector gesture={minimapComposed}>
@@ -1317,7 +1757,7 @@ export function CallTimeline({
           orientation={orientation}
           lengthPx={paneSize}
           durationMs={durationMs}
-          annotations={annotations}
+          annotations={displayAnnotations}
           showLiveEdge={live && frozenDurationMs === null}
           viewStartSv={viewStartSv}
           msPerPixelSv={msPerPixelSv}
@@ -1783,8 +2223,60 @@ export function CallTimeline({
               </Animated.View>
             </View>
           ) : null}
+          {adjustingAnnotation ? (
+            <View
+              pointerEvents="none"
+              style={[
+                styles.waveformOverlay,
+                vertical
+                  ? { top: LABEL_HEIGHT, height: paneSize, left: 0, right: 0 }
+                  : { left: LABEL_WIDTH, width: paneSize },
+              ]}
+            >
+              <Animated.View
+                style={[StyleSheet.absoluteFill, waveformShiftStyle]}
+              >
+                <View
+                  style={[
+                    vertical ? styles.handleHorizontal : styles.handle,
+                    vertical
+                      ? {
+                          top: adjustingAlong - 2,
+                          left: adjustingCrossStart,
+                          width: adjustingCrossSize,
+                          backgroundColor: adjustingHandleColor,
+                        }
+                      : {
+                          left: adjustingAlong - 2,
+                          top: adjustingCrossStart,
+                          height: adjustingCrossSize,
+                          backgroundColor: adjustingHandleColor,
+                        },
+                  ]}
+                />
+                <View
+                  style={[
+                    vertical ? styles.handleHorizontal : styles.handle,
+                    vertical
+                      ? {
+                          top: adjustingAlong + adjustingAlongSize - 2,
+                          left: adjustingCrossStart,
+                          width: adjustingCrossSize,
+                          backgroundColor: adjustingHandleColor,
+                        }
+                      : {
+                          left: adjustingAlong + adjustingAlongSize - 2,
+                          top: adjustingCrossStart,
+                          height: adjustingCrossSize,
+                          backgroundColor: adjustingHandleColor,
+                        },
+                  ]}
+                />
+              </Animated.View>
+            </View>
+          ) : null}
           <AnnotationMarkers
-            annotations={annotations}
+            annotations={displayAnnotations}
             selectedId={selectedAnnotationId}
             orientation={orientation}
             paneSize={paneSize}
@@ -1793,7 +2285,6 @@ export function CallTimeline({
             tracks={tracks}
             tracksCrossPx={tracksCrossPx}
             shiftStyle={waveformShiftStyle}
-            onSelect={(id) => onSelectAnnotation?.(id)}
           />
         </View>
       </GestureDetector>
