@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import * as Haptics from 'expo-haptics';
 import Animated, {
   runOnJS,
   useAnimatedStyle,
@@ -56,6 +57,8 @@ const MAX_TRACKS_VISIBLE = 4;
 const LIVE_EDGE_MS = 400;
 const VIEW_COMMIT_MS = 32;
 const HANDLE_HIT_PX = 24;
+const SELECT_LONG_PRESS_MS = 400;
+const SELECT_DRAG_MIN_PX = 8;
 
 type CatchupMode = 'off' | 'catching' | 'riding';
 
@@ -184,6 +187,7 @@ export function CallTimeline({
     endMs: -1,
     trackIndex: -1,
   });
+  const selectMovedSv = useSharedValue(0);
   const selectionRef = useRef<TimelineSelection | null>(null);
   selectionRef.current = selection;
   const tracksDuringPanRef = useRef(tracks);
@@ -495,6 +499,13 @@ export function CallTimeline({
     gesturingRef.current = value;
   }, []);
 
+  const handleSelectModeStart = useCallback(() => {
+    setSelecting(true);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(
+      () => undefined,
+    );
+  }, []);
+
   const handleFollowLiveChange = useCallback((nextFollow: boolean) => {
     if (followLiveRef.current === nextFollow) {
       return;
@@ -780,13 +791,12 @@ export function CallTimeline({
           let trackIndex = last.trackIndex;
           if (mode === 0 && selectingSv.value) {
             mode = 1;
-            if (across < rulerCross + MINIMAP_THICKNESS) {
-              trackIndex = -1;
-            } else {
-              trackIndex = Math.floor(
-                (across - rulerCross - MINIMAP_THICKNESS) / trackBreadth,
-              );
-            }
+            trackIndex =
+              across < rulerCross + MINIMAP_THICKNESS
+                ? -1
+                : Math.floor(
+                    (across - rulerCross - MINIMAP_THICKNESS) / trackBreadth,
+                  );
           }
           panOriginSv.value = {
             viewStartMs: viewStartSv.value,
@@ -837,24 +847,23 @@ export function CallTimeline({
                 Math.max(atMs, origin.startMs + SELECTION_MIN_WIDTH_MS),
               );
             }
-            const last = lastSelectionSv.value;
+            const lastSel = lastSelectionSv.value;
             if (
-              last.startMs === nextStartMs &&
-              last.endMs === nextEndMs &&
-              last.trackIndex === origin.trackIndex
+              lastSel.startMs !== nextStartMs ||
+              lastSel.endMs !== nextEndMs ||
+              lastSel.trackIndex !== origin.trackIndex
             ) {
-              return;
+              lastSelectionSv.value = {
+                startMs: nextStartMs,
+                endMs: nextEndMs,
+                trackIndex: origin.trackIndex,
+              };
+              runOnJS(handleSelectionDrag)(
+                nextStartMs,
+                nextEndMs,
+                origin.trackIndex,
+              );
             }
-            lastSelectionSv.value = {
-              startMs: nextStartMs,
-              endMs: nextEndMs,
-              trackIndex: origin.trackIndex,
-            };
-            runOnJS(handleSelectionDrag)(
-              nextStartMs,
-              nextEndMs,
-              origin.trackIndex,
-            );
             return;
           }
 
@@ -923,6 +932,136 @@ export function CallTimeline({
       vertical,
       viewStartSv,
       paneSizeSv,
+    ],
+  );
+
+  const selectPan = useMemo(
+    () => {
+      'use no memo';
+      const gesture = vertical
+        ? Gesture.Pan()
+            .activateAfterLongPress(SELECT_LONG_PRESS_MS)
+            .failOffsetY([-SELECT_DRAG_MIN_PX, SELECT_DRAG_MIN_PX])
+        : Gesture.Pan()
+            .activateAfterLongPress(SELECT_LONG_PRESS_MS)
+            .failOffsetX([-SELECT_DRAG_MIN_PX, SELECT_DRAG_MIN_PX]);
+      return gesture
+        .onStart((event) => {
+          'worklet';
+          const along = vertical ? event.y : event.x;
+          const across = vertical ? event.x : event.y;
+          selectMovedSv.value = 0;
+          if (
+            along < timeGutter ||
+            (across >= rulerCross &&
+              across < rulerCross + MINIMAP_THICKNESS)
+          ) {
+            panOriginSv.value = {
+              viewStartMs: viewStartSv.value,
+              msPerPixel: msPerPixelSv.value,
+              selection: 0,
+              mode: 0,
+              trackIndex: -1,
+              startMs: -1,
+              endMs: -1,
+            };
+            return;
+          }
+          runOnJS(setGesturing)(true);
+          selectingSv.value = 1;
+          runOnJS(handleSelectModeStart)();
+          panOriginSv.value = {
+            viewStartMs: viewStartSv.value,
+            msPerPixel: msPerPixelSv.value,
+            selection: 1,
+            mode: 1,
+            trackIndex:
+              across < rulerCross + MINIMAP_THICKNESS
+                ? -1
+                : Math.floor(
+                    (across - rulerCross - MINIMAP_THICKNESS) / trackBreadth,
+                  ),
+            startMs: -1,
+            endMs: -1,
+          };
+        })
+        .onUpdate((event) => {
+          'worklet';
+          const origin = panOriginSv.value;
+          if (origin.mode !== 1 || paneSizeSv.value <= 0) {
+            return;
+          }
+          const along = vertical ? event.y : event.x;
+          const translation = vertical ? event.translationY : event.translationX;
+          if (
+            selectMovedSv.value === 0 &&
+            Math.abs(translation) < SELECT_DRAG_MIN_PX
+          ) {
+            return;
+          }
+          selectMovedSv.value = 1;
+          const atMs =
+            origin.viewStartMs +
+            Math.max(0, along - timeGutter) * origin.msPerPixel;
+          const fromMs =
+            origin.viewStartMs +
+            Math.max(0, along - timeGutter) * origin.msPerPixel -
+            translation * origin.msPerPixel;
+          const left = Math.max(0, Math.min(fromMs, atMs));
+          const right = Math.min(durationSv.value, Math.max(fromMs, atMs));
+          const nextStartMs = left;
+          const nextEndMs = Math.max(left + SELECTION_MIN_WIDTH_MS, right);
+          const lastSel = lastSelectionSv.value;
+          if (
+            lastSel.startMs !== nextStartMs ||
+            lastSel.endMs !== nextEndMs ||
+            lastSel.trackIndex !== origin.trackIndex
+          ) {
+            lastSelectionSv.value = {
+              startMs: nextStartMs,
+              endMs: nextEndMs,
+              trackIndex: origin.trackIndex,
+            };
+            runOnJS(handleSelectionDrag)(
+              nextStartMs,
+              nextEndMs,
+              origin.trackIndex,
+            );
+          }
+        })
+        .onEnd(() => {
+          'worklet';
+          const origin = panOriginSv.value;
+          if (origin.mode === 1 && selectMovedSv.value) {
+            const last = lastSelectionSv.value;
+            runOnJS(handleSelectionGestureEnd)(
+              last.startMs,
+              last.endMs,
+              last.trackIndex,
+              origin.mode,
+            );
+            return;
+          }
+          runOnJS(setGesturing)(false);
+        });
+    },
+    [
+      durationSv,
+      handleSelectModeStart,
+      handleSelectionDrag,
+      handleSelectionGestureEnd,
+      lastSelectionSv,
+      msPerPixelSv,
+      panOriginSv,
+      paneSizeSv,
+      rulerCross,
+      selectingSv,
+      selectMovedSv,
+      setGesturing,
+      timeGutter,
+      trackBreadth,
+      vertical,
+      viewStartSv,
     ],
   );
 
@@ -1080,8 +1219,12 @@ export function CallTimeline({
   );
 
   const composed = useMemo(
-    () => Gesture.Simultaneous(Gesture.Exclusive(pan, tap), pinch),
-    [pan, pinch, tap],
+    () =>
+      Gesture.Simultaneous(
+        Gesture.Race(selectPan, Gesture.Exclusive(pan, tap)),
+        pinch,
+      ),
+    [pan, pinch, selectPan, tap],
   );
 
   const minimapComposed = useMemo(
