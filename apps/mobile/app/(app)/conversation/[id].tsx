@@ -21,6 +21,7 @@ import {
   applyOptimisticSample,
   applyParticipantJoined,
   applyParticipantLeft,
+  emptyRatification,
   scopeFromUserId,
   roundOffsetMs,
   upsertTrackChunk,
@@ -59,6 +60,7 @@ import {
   sendMessage,
   updateCallAnnotation,
   updateCallSelection,
+  upsertAnnotationRatification,
   type ActiveCallParticipant,
   type AnnotationProfile,
   type CallAnnotationItem,
@@ -78,6 +80,7 @@ function toTimelineAnnotation(item: CallAnnotationItem): TimelineAnnotation {
     scope: scopeFromUserId(item.userId),
     selectionId: item.selectionId,
     createdBy: item.createdBy,
+    ratification: item.ratification,
   };
 }
 
@@ -435,23 +438,24 @@ export default function ConversationScreen() {
             break;
           }
           setAnnotations((current) => {
-            const next = toTimelineAnnotation({
+            const existing = current.find(
+              (item) => item.id === event.payload.annotationId,
+            );
+            const next: TimelineAnnotation = {
               id: event.payload.annotationId,
-              callId: event.payload.callId,
-              conversationId: event.conversationId,
-              createdBy: event.payload.createdBy,
-              profile: {
-                ...event.payload.profile,
-                sortOrder: 0,
-              },
+              profile: event.payload.profile,
               note: event.payload.note,
-              startOffsetMs: event.payload.startOffsetMs,
-              endOffsetMs: event.payload.endOffsetMs,
-              userId: event.payload.userId,
+              startMs: event.payload.startOffsetMs,
+              endMs: event.payload.endOffsetMs,
+              scope: scopeFromUserId(event.payload.userId),
               selectionId: event.payload.selectionId,
-              createdAt: event.timestamp,
-              updatedAt: event.timestamp,
-            });
+              createdBy: event.payload.createdBy,
+              ratification:
+                event.type === 'annotation.updated'
+                  ? (existing?.ratification ??
+                    emptyRatification(memberNames.size))
+                  : emptyRatification(memberNames.size),
+            };
             const index = current.findIndex((item) => item.id === next.id);
             if (index === -1) {
               return [...current, next];
@@ -464,6 +468,54 @@ export default function ConversationScreen() {
           ) {
             setSelectedAnnotationId(event.payload.annotationId);
           }
+          break;
+
+        case 'annotation.ratification.updated':
+          if (event.payload.callId !== callIdRef.current) {
+            break;
+          }
+          setAnnotations((current) =>
+            current.map((item) => {
+              if (item.id !== event.payload.annotationId) {
+                return item;
+              }
+              return {
+                ...item,
+                ratification: {
+                  ...item.ratification,
+                  tallies: event.payload.tallies,
+                  myStance:
+                    event.payload.voter.id === user?.id
+                      ? event.payload.stance
+                      : item.ratification.myStance,
+                },
+              };
+            }),
+          );
+          break;
+
+        case 'annotation.ratification.resolved':
+          if (event.payload.callId !== callIdRef.current) {
+            break;
+          }
+          setAnnotations((current) =>
+            current.map((item) => {
+              if (item.id !== event.payload.annotationId) {
+                return item;
+              }
+              return {
+                ...item,
+                ratification: {
+                  ...item.ratification,
+                  outcome: {
+                    status: event.payload.status,
+                    decidedAt: event.payload.decidedAt,
+                    snapshot: event.payload.snapshot,
+                  },
+                },
+              };
+            }),
+          );
           break;
 
         case 'annotation.deleted':
@@ -1090,6 +1142,30 @@ export default function ConversationScreen() {
           : 'All channels'
       }
       canEdit={selectedAnnotation.createdBy.id === user.id}
+      canRatify={selectedAnnotation.createdBy.id !== user.id}
+      onRatify={(stance) => {
+        if (!token || !conversationId || !callId) {
+          return;
+        }
+        void upsertAnnotationRatification(
+          token,
+          conversationId,
+          callId,
+          selectedAnnotation.id,
+          stance,
+        ).then((updated) => {
+          const mapped = toTimelineAnnotation(updated);
+          setAnnotations((current) =>
+            current.map((item) =>
+              item.id === mapped.id ? mapped : item,
+            ),
+          );
+        }).catch((err: unknown) => {
+          setError(
+            err instanceof Error ? err.message : 'Failed to ratify',
+          );
+        });
+      }}
       onChangeNote={(note) => {
         if (!token || !conversationId || !callId) {
           return;

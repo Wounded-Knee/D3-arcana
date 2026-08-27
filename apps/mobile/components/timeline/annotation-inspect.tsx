@@ -9,7 +9,9 @@ type AnnotationInspectProps = {
   annotation: TimelineAnnotation;
   channelLabel: string;
   canEdit: boolean;
+  canRatify: boolean;
   onChangeNote: (note: string) => void;
+  onRatify: (stance: 'for' | 'against' | null) => void;
   onDismiss: () => void;
   onDelete?: () => void;
 };
@@ -18,7 +20,9 @@ export function AnnotationInspect({
   annotation,
   channelLabel,
   canEdit,
+  canRatify,
   onChangeNote,
+  onRatify,
   onDismiss,
   onDelete,
 }: AnnotationInspectProps) {
@@ -29,6 +33,7 @@ export function AnnotationInspect({
   }, [annotation.id, annotation.note]);
 
   const durationMs = Math.max(0, annotation.endMs - annotation.startMs);
+  const { myStance, tallies, outcome } = annotation.ratification;
 
   return (
     <View style={styles.frame}>
@@ -55,6 +60,68 @@ export function AnnotationInspect({
         {' · '}
         {channelLabel}
       </Text>
+      {outcome.status !== 'open' ? (
+        <Text
+          style={[
+            styles.outcome,
+            outcome.status === 'rejected' && styles.outcomeRejected,
+          ]}
+        >
+          {outcome.status === 'ratified' ? 'Ratified' : 'Rejected'}
+          {' · '}
+          {outcome.snapshot.totalUserCount} members
+          {' · '}
+          {outcome.snapshot.for} for
+          {' · '}
+          {outcome.snapshot.against} against
+        </Text>
+      ) : null}
+      <View style={styles.voteRow}>
+        <Pressable
+          style={[
+            styles.voteButton,
+            myStance === 'for' && styles.voteButtonActive,
+          ]}
+          disabled={!canRatify}
+          onPress={() => onRatify(myStance === 'for' ? null : 'for')}
+        >
+          <MaterialIcons
+            name="thumb-up"
+            size={16}
+            color={myStance === 'for' ? '#86efac' : '#94a3b8'}
+          />
+          <Text
+            style={[
+              styles.voteCount,
+              myStance === 'for' && styles.voteCountActive,
+            ]}
+          >
+            {tallies.for}
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[
+            styles.voteButton,
+            myStance === 'against' && styles.voteButtonActive,
+          ]}
+          disabled={!canRatify}
+          onPress={() => onRatify(myStance === 'against' ? null : 'against')}
+        >
+          <MaterialIcons
+            name="thumb-down"
+            size={16}
+            color={myStance === 'against' ? '#fb7185' : '#94a3b8'}
+          />
+          <Text
+            style={[
+              styles.voteCount,
+              myStance === 'against' && styles.voteCountActive,
+            ]}
+          >
+            {tallies.against}
+          </Text>
+        </Pressable>
+      </View>
       <TextInput
         style={styles.note}
         value={draft}
@@ -109,6 +176,41 @@ const styles = StyleSheet.create({
   meta: {
     color: '#94a3b8',
     fontSize: 12,
+  },
+  outcome: {
+    color: '#86efac',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  outcomeRejected: {
+    color: '#fb7185',
+  },
+  voteRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  voteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#1e293b',
+  },
+  voteButtonActive: {
+    borderColor: '#166534',
+    backgroundColor: '#052e16',
+  },
+  voteCount: {
+    color: '#94a3b8',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  voteCountActive: {
+    color: '#e2e8f0',
   },
   note: {
     minHeight: 40,

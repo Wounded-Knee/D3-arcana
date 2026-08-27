@@ -78,4 +78,12 @@ export function registerConsumers(
     "selection.deleted",
     annotationHandlers.handleSelectionDeleted,
   );
+  eventBus.subscribe(
+    "annotation.ratification.updated",
+    annotationHandlers.handleRatificationUpdated,
+  );
+  eventBus.subscribe(
+    "annotation.ratification.resolved",
+    annotationHandlers.handleRatificationResolved,
+  );
 }

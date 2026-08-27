@@ -81,6 +81,10 @@ export const updateAnnotationSchema = z.object({
   selectionId: z.uuid().nullable().optional(),
 });
 
+export const upsertAnnotationRatificationSchema = z.object({
+  stance: z.enum(["for", "against"]).nullable(),
+});
+
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

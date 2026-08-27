@@ -1,8 +1,11 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 
+import { SIMPLE_MAJORITY_KEY } from "@d3-arcana/democracy";
+
 import { db } from "../database.js";
-import { outboxEvents } from "../db/schema.js";
+import { callAnnotations, outboxEvents } from "../db/schema.js";
+import { democracyRegistry } from "../democracy/registry-instance.js";
 import { createCall } from "./calls.js";
 import { addConversationMember, createConversation } from "./conversations.js";
 import { createUser } from "./users.js";
@@ -12,8 +15,10 @@ import {
   createCallSelection,
   listAnnotationProfiles,
   SEEDED_ANNOTATION_PROFILES,
+  serializeAnnotationForViewer,
   updateCallAnnotation,
   updateCallSelection,
+  upsertAnnotationRatification,
 } from "./annotations.js";
 
 describe("annotations repository", () => {
@@ -167,5 +172,236 @@ describe("annotations repository", () => {
         note: "nope",
       }),
     ).rejects.toBeInstanceOf(AnnotationForbiddenError);
+  });
+
+  it("lets a non-author cast, switch, and retract a stance", async () => {
+    const { alice, bob, conversation, call } = await seedCall();
+    const annotation = await createCallAnnotation({
+      callId: call.id,
+      conversationId: conversation.id,
+      createdBy: alice.id,
+      profileId: SEEDED_ANNOTATION_PROFILES[0].id,
+      startOffsetMs: 0,
+      endOffsetMs: 0,
+    });
+
+    const cast = await upsertAnnotationRatification({
+      annotationId: annotation.id,
+      actorId: bob.id,
+      stance: "for",
+    });
+    expect(cast.ratification.myStance).toBe("for");
+    expect(cast.ratification.tallies).toEqual({
+      for: 1,
+      against: 0,
+      totalUserCount: 2,
+    });
+    expect(cast.ratification.outcome).toEqual({ status: "open" });
+
+    const switched = await upsertAnnotationRatification({
+      annotationId: annotation.id,
+      actorId: bob.id,
+      stance: "against",
+    });
+    expect(switched.ratification.myStance).toBe("against");
+    expect(switched.ratification.tallies).toEqual({
+      for: 0,
+      against: 1,
+      totalUserCount: 2,
+    });
+
+    const retracted = await upsertAnnotationRatification({
+      annotationId: annotation.id,
+      actorId: bob.id,
+      stance: null,
+    });
+    expect(retracted.ratification.myStance).toBeNull();
+    expect(retracted.ratification.tallies).toEqual({
+      for: 0,
+      against: 0,
+      totalUserCount: 2,
+    });
+
+    const events = await db
+      .select()
+      .from(outboxEvents)
+      .where(eq(outboxEvents.aggregateId, annotation.id));
+    const ratificationEvents = events.filter(
+      (event) => event.type === "annotation.ratification.updated",
+    );
+    expect(ratificationEvents).toHaveLength(3);
+    expect(ratificationEvents[0]?.payload).toMatchObject({
+      annotationId: annotation.id,
+      stance: "for",
+      tallies: { for: 1, against: 0, totalUserCount: 2 },
+    });
+    expect(ratificationEvents[2]?.payload).toMatchObject({
+      stance: null,
+      ratificationId: null,
+      tallies: { for: 0, against: 0, totalUserCount: 2 },
+    });
+    expect(
+      events.some((event) => event.type === "annotation.ratification.resolved"),
+    ).toBe(false);
+  });
+
+  it("forbids the author from ratifying", async () => {
+    const { alice, conversation, call } = await seedCall();
+    const annotation = await createCallAnnotation({
+      callId: call.id,
+      conversationId: conversation.id,
+      createdBy: alice.id,
+      profileId: SEEDED_ANNOTATION_PROFILES[0].id,
+      startOffsetMs: 0,
+      endOffsetMs: 0,
+    });
+
+    await expect(
+      upsertAnnotationRatification({
+        annotationId: annotation.id,
+        actorId: alice.id,
+        stance: "for",
+      }),
+    ).rejects.toBeInstanceOf(AnnotationForbiddenError);
+  });
+
+  it("derives live remainder as totalUserCount minus for and against", async () => {
+    const { alice, bob, conversation, call } = await seedCall();
+    const carol = await createUser("Carol");
+    await addConversationMember(conversation.id, carol.id);
+    const annotation = await createCallAnnotation({
+      callId: call.id,
+      conversationId: conversation.id,
+      createdBy: alice.id,
+      profileId: SEEDED_ANNOTATION_PROFILES[0].id,
+      startOffsetMs: 0,
+      endOffsetMs: 0,
+    });
+
+    await upsertAnnotationRatification({
+      annotationId: annotation.id,
+      actorId: bob.id,
+      stance: "for",
+    });
+
+    const listed = await serializeAnnotationForViewer(annotation, bob.id);
+    expect(listed.ratification.tallies).toEqual({
+      for: 1,
+      against: 0,
+      totalUserCount: 3,
+    });
+    expect(
+      listed.ratification.tallies.totalUserCount -
+        (listed.ratification.tallies.for + listed.ratification.tallies.against),
+    ).toBe(2);
+  });
+
+  it("stays open when no democracy model is registered", async () => {
+    const { alice, bob, conversation, call } = await seedCall();
+    const carol = await createUser("Carol");
+    await addConversationMember(conversation.id, carol.id);
+    const annotation = await createCallAnnotation({
+      callId: call.id,
+      conversationId: conversation.id,
+      createdBy: alice.id,
+      profileId: SEEDED_ANNOTATION_PROFILES[0].id,
+      startOffsetMs: 0,
+      endOffsetMs: 0,
+    });
+
+    await upsertAnnotationRatification({
+      annotationId: annotation.id,
+      actorId: bob.id,
+      stance: "for",
+    });
+    const second = await upsertAnnotationRatification({
+      annotationId: annotation.id,
+      actorId: carol.id,
+      stance: "for",
+    });
+    expect(second.ratification.outcome).toEqual({ status: "open" });
+  });
+
+  it("latches a snapshot at decision time and does not recompute after membership changes", async () => {
+    const { alice, bob, conversation, call } = await seedCall();
+    const carol = await createUser("Carol");
+    await addConversationMember(conversation.id, carol.id);
+
+    democracyRegistry.register({
+      key: SIMPLE_MAJORITY_KEY,
+      evaluate: (tally) =>
+        tally.for >= 2 ? { status: "ratified" } : { status: "undecided" },
+    });
+
+    const annotation = await createCallAnnotation({
+      callId: call.id,
+      conversationId: conversation.id,
+      createdBy: alice.id,
+      profileId: SEEDED_ANNOTATION_PROFILES[0].id,
+      startOffsetMs: 0,
+      endOffsetMs: 0,
+    });
+
+    await upsertAnnotationRatification({
+      annotationId: annotation.id,
+      actorId: bob.id,
+      stance: "for",
+    });
+    const latched = await upsertAnnotationRatification({
+      annotationId: annotation.id,
+      actorId: carol.id,
+      stance: "for",
+    });
+
+    expect(latched.ratification.outcome.status).toBe("ratified");
+    if (latched.ratification.outcome.status !== "ratified") {
+      throw new Error("expected latched outcome");
+    }
+    expect(latched.ratification.outcome.snapshot).toEqual({
+      modelKey: SIMPLE_MAJORITY_KEY,
+      for: 2,
+      against: 0,
+      totalUserCount: 3,
+    });
+
+    const dave = await createUser("Dave");
+    await addConversationMember(conversation.id, dave.id);
+    const afterJoin = await upsertAnnotationRatification({
+      annotationId: annotation.id,
+      actorId: dave.id,
+      stance: "for",
+    });
+
+    expect(afterJoin.ratification.tallies).toEqual({
+      for: 3,
+      against: 0,
+      totalUserCount: 4,
+    });
+    expect(afterJoin.ratification.outcome).toEqual(
+      latched.ratification.outcome,
+    );
+
+    const [row] = await db
+      .select({
+        status: callAnnotations.ratificationStatus,
+        snapshot: callAnnotations.ratificationSnapshot,
+      })
+      .from(callAnnotations)
+      .where(eq(callAnnotations.id, annotation.id));
+    expect(row?.status).toBe("ratified");
+    expect(row?.snapshot).toEqual({
+      modelKey: SIMPLE_MAJORITY_KEY,
+      for: 2,
+      against: 0,
+      totalUserCount: 3,
+    });
+
+    const events = await db
+      .select()
+      .from(outboxEvents)
+      .where(eq(outboxEvents.aggregateId, annotation.id));
+    expect(
+      events.filter((event) => event.type === "annotation.ratification.resolved"),
+    ).toHaveLength(1);
   });
 });

@@ -21,6 +21,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1111.0",
     "@aws-sdk/s3-request-presigner": "^3.1111.0",
+    "@d3-arcana/democracy": "workspace:*",
     "@d3-arcana/dev-auth": "workspace:*",
     "@d3-arcana/events": "workspace:*",
     "@d3-arcana/protocol": "workspace:*",

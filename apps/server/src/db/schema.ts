@@ -487,6 +487,21 @@ import {
       updatedAt: timestamp("updated_at", {
         withTimezone: true,
       }).defaultNow().notNull(),
+
+      ratificationStatus: text("ratification_status")
+        .notNull()
+        .default("open"),
+
+      ratificationDecidedAt: timestamp("ratification_decided_at", {
+        withTimezone: true,
+      }),
+
+      ratificationSnapshot: jsonb("ratification_snapshot").$type<{
+        modelKey: string;
+        for: number;
+        against: number;
+        totalUserCount: number;
+      }>(),
     },
     (table) => [
       uniqueIndex("call_annotations_selection_id_idx").on(table.selectionId),
@@ -494,5 +509,39 @@ import {
         table.callId,
         table.startOffsetMs,
       ),
+    ],
+  );
+
+  export const annotationRatifications = pgTable(
+    "annotation_ratifications",
+    {
+      id: uuid("id").defaultRandom().primaryKey(),
+
+      annotationId: uuid("annotation_id")
+        .notNull()
+        .references(() => callAnnotations.id, {
+          onDelete: "cascade",
+        }),
+
+      userId: uuid("user_id")
+        .notNull()
+        .references(() => users.id),
+
+      stance: text("stance").notNull(),
+
+      createdAt: timestamp("created_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+
+      updatedAt: timestamp("updated_at", {
+        withTimezone: true,
+      }).defaultNow().notNull(),
+    },
+    (table) => [
+      uniqueIndex("annotation_ratifications_annotation_user_idx").on(
+        table.annotationId,
+        table.userId,
+      ),
+      index("annotation_ratifications_annotation_idx").on(table.annotationId),
     ],
   );

@@ -30,4 +30,8 @@ afterEach(async () => {
   resetRecordingRetriesForTests();
   resetEmptyRoomGraceForTests();
   resetSilenceWatchesForTests();
+  const { resetDemocracyRegistryForTests } = await import(
+    "../democracy/registry-instance.js"
+  );
+  resetDemocracyRegistryForTests();
 });

@@ -11,6 +11,7 @@ import type {
   TimelineSelection,
   TimelineTrack,
 } from '@/components/timeline/timeline-model';
+import { emptyRatification } from '@/components/timeline/timeline-model';
 import {
   WAVEFORM_CHUNK_DURATION_MS,
   WAVEFORM_SAMPLE_INTERVAL_MS,
@@ -106,6 +107,7 @@ export default function TimelineTestScreen() {
       scope: { kind: 'all' },
       selectionId: null,
       createdBy: { id: 'local', displayName: 'You' },
+      ratification: emptyRatification(1),
     },
     {
       id: 'ann-question',
@@ -116,6 +118,7 @@ export default function TimelineTestScreen() {
       scope: { kind: 'channel', userId: 'sim-1' },
       selectionId: null,
       createdBy: { id: 'local', displayName: 'You' },
+      ratification: emptyRatification(1),
     },
     {
       id: 'ann-concern',
@@ -126,6 +129,7 @@ export default function TimelineTestScreen() {
       scope: { kind: 'all' },
       selectionId: null,
       createdBy: { id: 'local', displayName: 'You' },
+      ratification: emptyRatification(1),
     },
   ]);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(
@@ -149,6 +153,8 @@ export default function TimelineTestScreen() {
           : 'All channels'
       }
       canEdit
+      canRatify={false}
+      onRatify={() => undefined}
       onChangeNote={(note) => {
         setAnnotations((current) =>
           current.map((item) =>
@@ -219,6 +225,7 @@ export default function TimelineTestScreen() {
               : { kind: 'all' },
             selectionId: input.selection?.id ?? null,
             createdBy: { id: 'local', displayName: 'You' },
+            ratification: emptyRatification(1),
           };
           setAnnotations((current) => [...current, next]);
           setSelectedAnnotationId(id);

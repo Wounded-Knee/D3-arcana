@@ -3,6 +3,8 @@ import { z } from "zod";
 import {
   annotationCreatedEventSchema,
   annotationDeletedEventSchema,
+  annotationRatificationResolvedEventSchema,
+  annotationRatificationUpdatedEventSchema,
   annotationUpdatedEventSchema,
   selectionCreatedEventSchema,
   selectionDeletedEventSchema,
@@ -35,6 +37,8 @@ export const domainEventSchema = z.discriminatedUnion(
     annotationCreatedEventSchema,
     annotationUpdatedEventSchema,
     annotationDeletedEventSchema,
+    annotationRatificationUpdatedEventSchema,
+    annotationRatificationResolvedEventSchema,
     selectionCreatedEventSchema,
     selectionUpdatedEventSchema,
     selectionDeletedEventSchema,

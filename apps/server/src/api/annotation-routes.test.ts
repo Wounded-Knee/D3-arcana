@@ -217,4 +217,98 @@ describe("annotation routes", () => {
 
     expect(response.body.code).toBe("forbidden");
   });
+
+  it("lets a member ratify someone else's annotation", async () => {
+    const { conversation, app, callId } = await seedMembers();
+    const created = await request(app)
+      .post(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/annotations`,
+      )
+      .set("Authorization", "Bearer test-alice")
+      .send({
+        profileId: SEEDED_ANNOTATION_PROFILES[0].id,
+        startOffsetMs: 0,
+        endOffsetMs: 0,
+      })
+      .expect(201);
+
+    expect(created.body.ratification).toMatchObject({
+      myStance: null,
+      tallies: { for: 0, against: 0, totalUserCount: 2 },
+      outcome: { status: "open" },
+    });
+
+    const ratified = await request(app)
+      .put(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/annotations/${created.body.id}/ratification`,
+      )
+      .set("Authorization", "Bearer test-bob")
+      .send({ stance: "for" })
+      .expect(200);
+
+    expect(ratified.body.ratification.myStance).toBe("for");
+    expect(ratified.body.ratification.tallies).toEqual({
+      for: 1,
+      against: 0,
+      totalUserCount: 2,
+    });
+
+    const listedAsBob = await request(app)
+      .get(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/annotations`,
+      )
+      .set("Authorization", "Bearer test-bob")
+      .expect(200);
+    expect(listedAsBob.body.annotations[0].ratification.myStance).toBe("for");
+
+    const listedAsAlice = await request(app)
+      .get(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/annotations`,
+      )
+      .set("Authorization", "Bearer test-alice")
+      .expect(200);
+    expect(listedAsAlice.body.annotations[0].ratification.myStance).toBeNull();
+    expect(listedAsAlice.body.annotations[0].ratification.tallies.for).toBe(1);
+
+    await request(app)
+      .put(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/annotations/${created.body.id}/ratification`,
+      )
+      .set("Authorization", "Bearer test-bob")
+      .send({ stance: null })
+      .expect(200);
+  });
+
+  it("forbids the author and outsiders from ratifying", async () => {
+    const { conversation, app, callId } = await seedMembers();
+    const created = await request(app)
+      .post(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/annotations`,
+      )
+      .set("Authorization", "Bearer test-alice")
+      .send({
+        profileId: SEEDED_ANNOTATION_PROFILES[0].id,
+        startOffsetMs: 0,
+        endOffsetMs: 0,
+      })
+      .expect(201);
+
+    const author = await request(app)
+      .put(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/annotations/${created.body.id}/ratification`,
+      )
+      .set("Authorization", "Bearer test-alice")
+      .send({ stance: "for" })
+      .expect(403);
+    expect(author.body.code).toBe("forbidden");
+
+    const outsider = await request(app)
+      .put(
+        `/api/v1/conversations/${conversation.id}/calls/${callId}/annotations/${created.body.id}/ratification`,
+      )
+      .set("Authorization", "Bearer test-outsider")
+      .send({ stance: "for" })
+      .expect(403);
+    expect(outsider.body.code).toBe("forbidden");
+  });
 });

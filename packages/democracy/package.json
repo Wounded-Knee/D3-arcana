@@ -1,0 +1,17 @@
+{
+  "name": "@d3-arcana/democracy",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Pluggable democracy model types and tally helpers",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.10"
+  }
+}

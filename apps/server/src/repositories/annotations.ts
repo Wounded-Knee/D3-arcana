@@ -1,13 +1,20 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, count, eq, inArray } from "drizzle-orm";
+import { tallyFromCounts } from "@d3-arcana/democracy";
 
 import { db } from "../database.js";
 import {
   annotationProfiles,
+  annotationRatifications,
   callAnnotations,
   callSelections,
+  conversationMembers,
   outboxEvents,
   users,
 } from "../db/schema.js";
+import {
+  democracyRegistry,
+  SIMPLE_MAJORITY_KEY,
+} from "../democracy/registry-instance.js";
 
 export const SELECTION_MIN_WIDTH_MS = 50;
 
@@ -122,6 +129,32 @@ export type CallAnnotationRecord = {
   selectionId: string | null;
   createdAt: Date;
   updatedAt: Date;
+  ratificationStatus: string;
+  ratificationDecidedAt: Date | null;
+  ratificationSnapshot: RatificationSnapshotPayload | null;
+};
+
+export type RatificationSnapshotPayload = {
+  modelKey: string;
+  for: number;
+  against: number;
+  totalUserCount: number;
+};
+
+export type AnnotationRatificationView = {
+  myStance: "for" | "against" | null;
+  tallies: {
+    for: number;
+    against: number;
+    totalUserCount: number;
+  };
+  outcome:
+    | { status: "open" }
+    | {
+        status: "ratified" | "rejected";
+        decidedAt: string;
+        snapshot: RatificationSnapshotPayload;
+      };
 };
 
 function assertSelectionRange(startOffsetMs: number, endOffsetMs: number): void {
@@ -199,7 +232,10 @@ function selectionEventPayload(record: CallSelectionRecord) {
   };
 }
 
-export function serializeAnnotation(record: CallAnnotationRecord) {
+export function serializeAnnotation(
+  record: CallAnnotationRecord,
+  ratification: AnnotationRatificationView,
+) {
   return {
     id: record.id,
     callId: record.callId,
@@ -213,6 +249,7 @@ export function serializeAnnotation(record: CallAnnotationRecord) {
     selectionId: record.selectionId,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
+    ratification,
   };
 }
 
@@ -528,44 +565,53 @@ export async function deleteCallSelection(input: {
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
-async function loadAnnotationInTx(
-  tx: Tx,
-  annotationId: string,
-): Promise<CallAnnotationRecord | null> {
-  const [row] = await tx
-    .select({
-      id: callAnnotations.id,
-      callId: callAnnotations.callId,
-      conversationId: callAnnotations.conversationId,
-      createdById: callAnnotations.createdBy,
-      createdByName: users.displayName,
-      note: callAnnotations.note,
-      startOffsetMs: callAnnotations.startOffsetMs,
-      endOffsetMs: callAnnotations.endOffsetMs,
-      userId: callAnnotations.userId,
-      selectionId: callAnnotations.selectionId,
-      createdAt: callAnnotations.createdAt,
-      updatedAt: callAnnotations.updatedAt,
-      profileId: annotationProfiles.id,
-      profileKey: annotationProfiles.key,
-      profileName: annotationProfiles.name,
-      profileColor: annotationProfiles.color,
-      profileIcon: annotationProfiles.icon,
-      profileSortOrder: annotationProfiles.sortOrder,
-    })
-    .from(callAnnotations)
-    .innerJoin(users, eq(callAnnotations.createdBy, users.id))
-    .innerJoin(
-      annotationProfiles,
-      eq(callAnnotations.profileId, annotationProfiles.id),
-    )
-    .where(eq(callAnnotations.id, annotationId))
-    .limit(1);
+const annotationSelect = {
+  id: callAnnotations.id,
+  callId: callAnnotations.callId,
+  conversationId: callAnnotations.conversationId,
+  createdById: callAnnotations.createdBy,
+  createdByName: users.displayName,
+  note: callAnnotations.note,
+  startOffsetMs: callAnnotations.startOffsetMs,
+  endOffsetMs: callAnnotations.endOffsetMs,
+  userId: callAnnotations.userId,
+  selectionId: callAnnotations.selectionId,
+  createdAt: callAnnotations.createdAt,
+  updatedAt: callAnnotations.updatedAt,
+  ratificationStatus: callAnnotations.ratificationStatus,
+  ratificationDecidedAt: callAnnotations.ratificationDecidedAt,
+  ratificationSnapshot: callAnnotations.ratificationSnapshot,
+  profileId: annotationProfiles.id,
+  profileKey: annotationProfiles.key,
+  profileName: annotationProfiles.name,
+  profileColor: annotationProfiles.color,
+  profileIcon: annotationProfiles.icon,
+  profileSortOrder: annotationProfiles.sortOrder,
+};
 
-  if (!row) {
-    return null;
-  }
-
+function mapAnnotationRow(row: {
+  id: string;
+  callId: string;
+  conversationId: string;
+  createdById: string;
+  createdByName: string;
+  note: string | null;
+  startOffsetMs: number;
+  endOffsetMs: number;
+  userId: string | null;
+  selectionId: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  ratificationStatus: string;
+  ratificationDecidedAt: Date | null;
+  ratificationSnapshot: RatificationSnapshotPayload | null;
+  profileId: string;
+  profileKey: string;
+  profileName: string;
+  profileColor: string;
+  profileIcon: string;
+  profileSortOrder: number;
+}): CallAnnotationRecord {
   return {
     id: row.id,
     callId: row.callId,
@@ -586,33 +632,39 @@ async function loadAnnotationInTx(
     selectionId: row.selectionId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    ratificationStatus: row.ratificationStatus,
+    ratificationDecidedAt: row.ratificationDecidedAt,
+    ratificationSnapshot: row.ratificationSnapshot,
   };
+}
+
+async function loadAnnotationInTx(
+  tx: Tx,
+  annotationId: string,
+): Promise<CallAnnotationRecord | null> {
+  const [row] = await tx
+    .select(annotationSelect)
+    .from(callAnnotations)
+    .innerJoin(users, eq(callAnnotations.createdBy, users.id))
+    .innerJoin(
+      annotationProfiles,
+      eq(callAnnotations.profileId, annotationProfiles.id),
+    )
+    .where(eq(callAnnotations.id, annotationId))
+    .limit(1);
+
+  if (!row) {
+    return null;
+  }
+
+  return mapAnnotationRow(row);
 }
 
 export async function listCallAnnotations(
   callId: string,
 ): Promise<CallAnnotationRecord[]> {
   const rows = await db
-    .select({
-      id: callAnnotations.id,
-      callId: callAnnotations.callId,
-      conversationId: callAnnotations.conversationId,
-      createdById: callAnnotations.createdBy,
-      createdByName: users.displayName,
-      note: callAnnotations.note,
-      startOffsetMs: callAnnotations.startOffsetMs,
-      endOffsetMs: callAnnotations.endOffsetMs,
-      userId: callAnnotations.userId,
-      selectionId: callAnnotations.selectionId,
-      createdAt: callAnnotations.createdAt,
-      updatedAt: callAnnotations.updatedAt,
-      profileId: annotationProfiles.id,
-      profileKey: annotationProfiles.key,
-      profileName: annotationProfiles.name,
-      profileColor: annotationProfiles.color,
-      profileIcon: annotationProfiles.icon,
-      profileSortOrder: annotationProfiles.sortOrder,
-    })
+    .select(annotationSelect)
     .from(callAnnotations)
     .innerJoin(users, eq(callAnnotations.createdBy, users.id))
     .innerJoin(
@@ -622,27 +674,7 @@ export async function listCallAnnotations(
     .where(eq(callAnnotations.callId, callId))
     .orderBy(asc(callAnnotations.startOffsetMs), asc(callAnnotations.id));
 
-  return rows.map((row) => ({
-    id: row.id,
-    callId: row.callId,
-    conversationId: row.conversationId,
-    createdBy: { id: row.createdById, displayName: row.createdByName },
-    profile: {
-      id: row.profileId,
-      key: row.profileKey,
-      name: row.profileName,
-      color: row.profileColor,
-      icon: row.profileIcon,
-      sortOrder: row.profileSortOrder,
-    },
-    note: row.note,
-    startOffsetMs: row.startOffsetMs,
-    endOffsetMs: row.endOffsetMs,
-    userId: row.userId,
-    selectionId: row.selectionId,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  }));
+  return rows.map(mapAnnotationRow);
 }
 
 export async function getCallAnnotationById(
@@ -871,5 +903,339 @@ export async function deleteCallAnnotation(input: {
     });
 
     return existing;
+  });
+}
+
+function serializeOutcome(
+  record: CallAnnotationRecord,
+): AnnotationRatificationView["outcome"] {
+  if (
+    (record.ratificationStatus === "ratified" ||
+      record.ratificationStatus === "rejected") &&
+    record.ratificationDecidedAt &&
+    record.ratificationSnapshot
+  ) {
+    return {
+      status: record.ratificationStatus,
+      decidedAt: record.ratificationDecidedAt.toISOString(),
+      snapshot: record.ratificationSnapshot,
+    };
+  }
+
+  return { status: "open" };
+}
+
+async function countConversationMembersInTx(
+  tx: Tx,
+  conversationId: string,
+): Promise<number> {
+  const [row] = await tx
+    .select({ n: count() })
+    .from(conversationMembers)
+    .where(eq(conversationMembers.conversationId, conversationId));
+
+  return Number(row?.n ?? 0);
+}
+
+async function loadStanceRowsInTx(
+  tx: Tx,
+  annotationId: string,
+): Promise<{ userId: string; stance: string }[]> {
+  return tx
+    .select({
+      userId: annotationRatifications.userId,
+      stance: annotationRatifications.stance,
+    })
+    .from(annotationRatifications)
+    .where(eq(annotationRatifications.annotationId, annotationId));
+}
+
+function viewFromStanceRows(
+  record: CallAnnotationRecord,
+  viewerId: string,
+  totalUserCount: number,
+  rows: { userId: string; stance: string }[],
+): AnnotationRatificationView {
+  let forCount = 0;
+  let againstCount = 0;
+  let myStance: "for" | "against" | null = null;
+
+  for (const row of rows) {
+    if (row.stance === "for") {
+      forCount += 1;
+    } else if (row.stance === "against") {
+      againstCount += 1;
+    }
+
+    if (
+      row.userId === viewerId &&
+      (row.stance === "for" || row.stance === "against")
+    ) {
+      myStance = row.stance;
+    }
+  }
+
+  return {
+    myStance,
+    tallies: {
+      for: forCount,
+      against: againstCount,
+      totalUserCount,
+    },
+    outcome: serializeOutcome(record),
+  };
+}
+
+export async function serializeAnnotationForViewer(
+  record: CallAnnotationRecord,
+  viewerId: string,
+) {
+  const views = await loadRatificationViews([record], viewerId);
+  const view = views.get(record.id);
+  if (!view) {
+    throw new Error("Failed to load ratification view");
+  }
+  return serializeAnnotation(record, view);
+}
+
+export async function serializeAnnotationsForViewer(
+  records: CallAnnotationRecord[],
+  viewerId: string,
+) {
+  const views = await loadRatificationViews(records, viewerId);
+  return records.map((record) => {
+    const view = views.get(record.id);
+    if (!view) {
+      throw new Error("Failed to load ratification view");
+    }
+    return serializeAnnotation(record, view);
+  });
+}
+
+async function loadRatificationViews(
+  records: CallAnnotationRecord[],
+  viewerId: string,
+): Promise<Map<string, AnnotationRatificationView>> {
+  const views = new Map<string, AnnotationRatificationView>();
+  if (records.length === 0) {
+    return views;
+  }
+
+  const conversationId = records[0]!.conversationId;
+  const [memberRow] = await db
+    .select({ n: count() })
+    .from(conversationMembers)
+    .where(eq(conversationMembers.conversationId, conversationId));
+  const totalUserCount = Number(memberRow?.n ?? 0);
+
+  const ids = records.map((record) => record.id);
+  const stanceRows = await db
+    .select({
+      annotationId: annotationRatifications.annotationId,
+      userId: annotationRatifications.userId,
+      stance: annotationRatifications.stance,
+    })
+    .from(annotationRatifications)
+    .where(inArray(annotationRatifications.annotationId, ids));
+
+  const byAnnotation = new Map<string, { userId: string; stance: string }[]>();
+  for (const row of stanceRows) {
+    const current = byAnnotation.get(row.annotationId) ?? [];
+    current.push({ userId: row.userId, stance: row.stance });
+    byAnnotation.set(row.annotationId, current);
+  }
+
+  for (const record of records) {
+    views.set(
+      record.id,
+      viewFromStanceRows(
+        record,
+        viewerId,
+        totalUserCount,
+        byAnnotation.get(record.id) ?? [],
+      ),
+    );
+  }
+
+  return views;
+}
+
+export async function upsertAnnotationRatification(input: {
+  annotationId: string;
+  actorId: string;
+  stance: "for" | "against" | null;
+}): Promise<{
+  record: CallAnnotationRecord;
+  ratification: AnnotationRatificationView;
+}> {
+  return db.transaction(async (tx) => {
+    let record = await loadAnnotationInTx(tx, input.annotationId);
+    if (!record) {
+      throw new AnnotationValidationError("Annotation not found");
+    }
+
+    if (record.createdBy.id === input.actorId) {
+      throw new AnnotationForbiddenError(
+        "The author cannot ratify this annotation",
+      );
+    }
+
+    const [existingStance] = await tx
+      .select({
+        id: annotationRatifications.id,
+        stance: annotationRatifications.stance,
+      })
+      .from(annotationRatifications)
+      .where(
+        and(
+          eq(annotationRatifications.annotationId, input.annotationId),
+          eq(annotationRatifications.userId, input.actorId),
+        ),
+      )
+      .limit(1);
+
+    let ratificationId: string | null = existingStance?.id ?? null;
+
+    if (input.stance === null) {
+      if (existingStance) {
+        await tx
+          .delete(annotationRatifications)
+          .where(eq(annotationRatifications.id, existingStance.id));
+        ratificationId = null;
+      }
+    } else if (!existingStance || existingStance.stance !== input.stance) {
+      const now = new Date();
+      if (existingStance) {
+        const [updated] = await tx
+          .update(annotationRatifications)
+          .set({
+            stance: input.stance,
+            updatedAt: now,
+          })
+          .where(eq(annotationRatifications.id, existingStance.id))
+          .returning();
+        ratificationId = updated.id;
+      } else {
+        const [inserted] = await tx
+          .insert(annotationRatifications)
+          .values({
+            annotationId: input.annotationId,
+            userId: input.actorId,
+            stance: input.stance,
+          })
+          .returning();
+        ratificationId = inserted.id;
+      }
+    }
+
+    const stanceChanged =
+      input.stance === null
+        ? existingStance !== undefined
+        : !existingStance || existingStance.stance !== input.stance;
+
+    const [voter] = await tx
+      .select({
+        id: users.id,
+        displayName: users.displayName,
+      })
+      .from(users)
+      .where(eq(users.id, input.actorId))
+      .limit(1);
+
+    const totalUserCount = await countConversationMembersInTx(
+      tx,
+      record.conversationId,
+    );
+    const stanceRows = await loadStanceRowsInTx(tx, record.id);
+    let ratification = viewFromStanceRows(
+      record,
+      input.actorId,
+      totalUserCount,
+      stanceRows,
+    );
+
+    if (stanceChanged) {
+      await tx.insert(outboxEvents).values({
+        type: "annotation.ratification.updated",
+        aggregateType: "annotation",
+        aggregateId: record.id,
+        conversationId: record.conversationId,
+        actorId: input.actorId,
+        payload: {
+          annotationId: record.id,
+          callId: record.callId,
+          ratificationId,
+          voter: {
+            id: voter?.id ?? input.actorId,
+            displayName: voter?.displayName ?? "Unknown",
+          },
+          stance: input.stance,
+          tallies: ratification.tallies,
+        },
+      });
+    }
+
+    if (
+      record.ratificationStatus !== "ratified" &&
+      record.ratificationStatus !== "rejected"
+    ) {
+      const model = democracyRegistry.get(SIMPLE_MAJORITY_KEY);
+      if (model) {
+        const decision = model.evaluate(
+          tallyFromCounts(
+            totalUserCount,
+            ratification.tallies.for,
+            ratification.tallies.against,
+          ),
+        );
+
+        if (decision.status === "ratified" || decision.status === "rejected") {
+          const decidedAt = new Date();
+          const snapshot: RatificationSnapshotPayload = {
+            modelKey: model.key,
+            for: ratification.tallies.for,
+            against: ratification.tallies.against,
+            totalUserCount,
+          };
+
+          await tx
+            .update(callAnnotations)
+            .set({
+              ratificationStatus: decision.status,
+              ratificationDecidedAt: decidedAt,
+              ratificationSnapshot: snapshot,
+            })
+            .where(eq(callAnnotations.id, record.id));
+
+          record = {
+            ...record,
+            ratificationStatus: decision.status,
+            ratificationDecidedAt: decidedAt,
+            ratificationSnapshot: snapshot,
+          };
+          ratification = {
+            ...ratification,
+            outcome: serializeOutcome(record),
+          };
+
+          await tx.insert(outboxEvents).values({
+            type: "annotation.ratification.resolved",
+            aggregateType: "annotation",
+            aggregateId: record.id,
+            conversationId: record.conversationId,
+            actorId: input.actorId,
+            payload: {
+              annotationId: record.id,
+              callId: record.callId,
+              status: decision.status,
+              decidedAt: decidedAt.toISOString(),
+              snapshot,
+            },
+          });
+        }
+      }
+    }
+
+    return { record, ratification };
   });
 }

@@ -19,6 +19,7 @@ import {
   createSelectionSchema,
   updateAnnotationSchema,
   updateSelectionSchema,
+  upsertAnnotationRatificationSchema,
 } from "./schemas/http.js";
 import { requireAuth } from "../auth/require-auth.js";
 import {
@@ -74,9 +75,12 @@ import {
   listCallAnnotations,
   listCallSelections,
   serializeAnnotation,
+  serializeAnnotationForViewer,
+  serializeAnnotationsForViewer,
   serializeSelection,
   updateCallAnnotation,
   updateCallSelection,
+  upsertAnnotationRatification,
 } from "../repositories/annotations.js";
 
 const joinCallBodySchema = z.object({
@@ -732,7 +736,12 @@ export function registerCallRoutes(
       );
       await requireCallMember(conversationId, callId, req.user!.userId);
       const annotations = await listCallAnnotations(callId);
-      res.json({ annotations: annotations.map(serializeAnnotation) });
+      res.json({
+        annotations: await serializeAnnotationsForViewer(
+          annotations,
+          req.user!.userId,
+        ),
+      });
     }),
   );
 
@@ -757,7 +766,9 @@ export function registerCallRoutes(
           endOffsetMs: body.endOffsetMs,
           userId: body.userId,
         });
-        res.status(201).json(serializeAnnotation(annotation));
+        res.status(201).json(
+          await serializeAnnotationForViewer(annotation, req.user!.userId),
+        );
       } catch (error) {
         throw mapAnnotationError(error);
       }
@@ -785,7 +796,36 @@ export function registerCallRoutes(
           note: body.note,
           selectionId: body.selectionId,
         });
-        res.json(serializeAnnotation(annotation));
+        res.json(
+          await serializeAnnotationForViewer(annotation, req.user!.userId),
+        );
+      } catch (error) {
+        throw mapAnnotationError(error);
+      }
+    }),
+  );
+
+  router.put(
+    "/conversations/:conversationId/calls/:callId/annotations/:annotationId/ratification",
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const { conversationId, callId, annotationId } = parseParams(
+        conversationCallAnnotationParamsSchema,
+        req.params,
+      );
+      const body = parseBody(upsertAnnotationRatificationSchema, req.body ?? {});
+      await requireCallMember(conversationId, callId, req.user!.userId);
+      const existing = await getCallAnnotationById(annotationId);
+      if (!existing || existing.callId !== callId) {
+        throw new NotFoundError("Annotation not found");
+      }
+      try {
+        const { record, ratification } = await upsertAnnotationRatification({
+          annotationId,
+          actorId: req.user!.userId,
+          stance: body.stance,
+        });
+        res.json(serializeAnnotation(record, ratification));
       } catch (error) {
         throw mapAnnotationError(error);
       }

@@ -156,3 +156,71 @@ export const selectionDeletedEventSchema = z.object({
 export type SelectionDeletedEvent = z.infer<
   typeof selectionDeletedEventSchema
 >;
+
+export const ratificationTalliesSchema = z.object({
+  for: z.number().int().nonnegative(),
+  against: z.number().int().nonnegative(),
+  totalUserCount: z.number().int().nonnegative(),
+});
+
+export type RatificationTallies = z.infer<typeof ratificationTalliesSchema>;
+
+export const ratificationSnapshotSchema = z.object({
+  modelKey: z.string().min(1),
+  for: z.number().int().nonnegative(),
+  against: z.number().int().nonnegative(),
+  totalUserCount: z.number().int().nonnegative(),
+});
+
+export type RatificationSnapshot = z.infer<typeof ratificationSnapshotSchema>;
+
+export const annotationRatificationUpdatedPayloadSchema = z.object({
+  annotationId: z.uuid(),
+  callId: z.uuid(),
+  ratificationId: z.uuid().nullable(),
+  voter: annotationActorSchema,
+  stance: z.enum(["for", "against"]).nullable(),
+  tallies: ratificationTalliesSchema,
+});
+
+export type AnnotationRatificationUpdatedPayload = z.infer<
+  typeof annotationRatificationUpdatedPayloadSchema
+>;
+
+export const annotationRatificationUpdatedEventSchema = z.object({
+  eventId: z.uuid(),
+  type: z.literal("annotation.ratification.updated"),
+  timestamp: z.string(),
+  conversationId: z.uuid(),
+  actorId: z.uuid(),
+  payload: annotationRatificationUpdatedPayloadSchema,
+});
+
+export type AnnotationRatificationUpdatedEvent = z.infer<
+  typeof annotationRatificationUpdatedEventSchema
+>;
+
+export const annotationRatificationResolvedPayloadSchema = z.object({
+  annotationId: z.uuid(),
+  callId: z.uuid(),
+  status: z.enum(["ratified", "rejected"]),
+  decidedAt: z.string(),
+  snapshot: ratificationSnapshotSchema,
+});
+
+export type AnnotationRatificationResolvedPayload = z.infer<
+  typeof annotationRatificationResolvedPayloadSchema
+>;
+
+export const annotationRatificationResolvedEventSchema = z.object({
+  eventId: z.uuid(),
+  type: z.literal("annotation.ratification.resolved"),
+  timestamp: z.string(),
+  conversationId: z.uuid(),
+  actorId: z.uuid(),
+  payload: annotationRatificationResolvedPayloadSchema,
+});
+
+export type AnnotationRatificationResolvedEvent = z.infer<
+  typeof annotationRatificationResolvedEventSchema
+>;

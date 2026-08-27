@@ -49,7 +49,41 @@ export type TimelineAnnotation = {
   scope: ChannelScope;
   selectionId: string | null;
   createdBy: { id: string; displayName: string };
+  ratification: TimelineAnnotationRatification;
 };
+
+export type TimelineRatificationOutcome =
+  | { status: 'open' }
+  | {
+      status: 'ratified' | 'rejected';
+      decidedAt: string;
+      snapshot: {
+        modelKey: string;
+        for: number;
+        against: number;
+        totalUserCount: number;
+      };
+    };
+
+export type TimelineAnnotationRatification = {
+  myStance: 'for' | 'against' | null;
+  tallies: {
+    for: number;
+    against: number;
+    totalUserCount: number;
+  };
+  outcome: TimelineRatificationOutcome;
+};
+
+export function emptyRatification(
+  totalUserCount: number,
+): TimelineAnnotationRatification {
+  return {
+    myStance: null,
+    tallies: { for: 0, against: 0, totalUserCount },
+    outcome: { status: 'open' },
+  };
+}
 
 export function scopeUserId(scope: ChannelScope): string | null {
   return scope.kind === 'channel' ? scope.userId : null;

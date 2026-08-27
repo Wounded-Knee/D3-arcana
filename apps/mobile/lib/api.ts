@@ -590,7 +590,29 @@ export interface CallAnnotationItem {
   selectionId: string | null;
   createdAt: string;
   updatedAt: string;
+  ratification: AnnotationRatificationView;
 }
+
+export type AnnotationRatificationView = {
+  myStance: 'for' | 'against' | null;
+  tallies: {
+    for: number;
+    against: number;
+    totalUserCount: number;
+  };
+  outcome:
+    | { status: 'open' }
+    | {
+        status: 'ratified' | 'rejected';
+        decidedAt: string;
+        snapshot: {
+          modelKey: string;
+          for: number;
+          against: number;
+          totalUserCount: number;
+        };
+      };
+};
 
 export async function fetchAnnotationProfiles(
   token: string,
@@ -732,5 +754,22 @@ export async function deleteCallAnnotation(
     token,
     `/api/v1/conversations/${conversationId}/calls/${callId}/annotations/${annotationId}`,
     { method: 'DELETE' },
+  );
+}
+
+export async function upsertAnnotationRatification(
+  token: string,
+  conversationId: string,
+  callId: string,
+  annotationId: string,
+  stance: 'for' | 'against' | null,
+): Promise<CallAnnotationItem> {
+  return request<CallAnnotationItem>(
+    token,
+    `/api/v1/conversations/${conversationId}/calls/${callId}/annotations/${annotationId}/ratification`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ stance }),
+    },
   );
 }

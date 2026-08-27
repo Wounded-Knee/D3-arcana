@@ -140,6 +140,9 @@ importers:
       '@aws-sdk/s3-request-presigner':
         specifier: ^3.1111.0
         version: 3.1111.0
+      '@d3-arcana/democracy':
+        specifier: workspace:*
+        version: link:../../packages/democracy
       '@d3-arcana/dev-auth':
         specifier: workspace:*
         version: link:../../packages/dev-auth
@@ -201,6 +204,15 @@ importers:
       tsx:
         specifier: ^4.23.12
         version: 4.23.12
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.10
+        version: 4.1.10(@types/node@26.2.0)(vite@8.2.1(@types/node@26.2.0)(esbuild@0.28.2)(terser@5.49.2)(tsx@4.23.12)(yaml@2.9.0))
+
+  packages/democracy:
+    devDependencies:
       typescript:
         specifier: ~5.9.3
         version: 5.9.3

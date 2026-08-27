@@ -1,6 +1,8 @@
 import type {
   AnnotationCreatedEvent,
   AnnotationDeletedEvent,
+  AnnotationRatificationResolvedEvent,
+  AnnotationRatificationUpdatedEvent,
   AnnotationUpdatedEvent,
   DomainEvent,
   SelectionCreatedEvent,
@@ -50,6 +52,10 @@ export function createAnnotationEventsWebSocketHandler(
     handleSelectionUpdated: (event: SelectionUpdatedEvent) =>
       broadcastAnnotationEvent(manager, event),
     handleSelectionDeleted: (event: SelectionDeletedEvent) =>
+      broadcastAnnotationEvent(manager, event),
+    handleRatificationUpdated: (event: AnnotationRatificationUpdatedEvent) =>
+      broadcastAnnotationEvent(manager, event),
+    handleRatificationResolved: (event: AnnotationRatificationResolvedEvent) =>
       broadcastAnnotationEvent(manager, event),
   };
 }
